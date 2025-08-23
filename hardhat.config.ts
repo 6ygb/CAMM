@@ -10,7 +10,7 @@ import { vars } from "hardhat/config";
 import "solidity-coverage";
 
 import "./tasks/accounts";
-import "./tasks/TOTP";
+import "./tasks/CAMM";
 import "./tasks/standard_inputs";
 
 // Run 'npx hardhat vars setup' to see the list of variables that need to be set
@@ -65,8 +65,9 @@ const config: HardhatUserConfig = {
     sources: "./contracts",
     tests: "./test",
   },
+  mocha: { timeout: 3000000 },
   solidity: {
-    version: "0.8.24",
+    version: "0.8.27",
     settings: {
       metadata: {
         // Not including the metadata hash
@@ -79,6 +80,7 @@ const config: HardhatUserConfig = {
         enabled: true,
         runs: 800,
       },
+      viaIR: true,
       evmVersion: "cancun",
     },
   },

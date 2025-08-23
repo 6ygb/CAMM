@@ -25,6 +25,7 @@
   ],
   "dependencies": {
     "@fhevm/solidity": "^0.7.0",
+    "@openzeppelin/confidential-contracts": "^0.2.0",
     "@openzeppelin/contracts": "^5.1.0",
     "@openzeppelin/contracts-upgradeable": "^5.1.0",
     "chart.js": "^4.5.0",
