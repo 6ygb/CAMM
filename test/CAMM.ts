@@ -51,7 +51,11 @@ describe("CAMM Tests", function () {
     const token1 = this.token1;
     const token2 = this.token2;
 
-    const createPairTx = await factory.createPair(await token1.getAddress(), await token2.getAddress());
+    const createPairTx = await factory.createPair(
+      await token1.getAddress(),
+      await token2.getAddress(),
+      this.signers[0].address,
+    );
     const createPairReceipt = await createPairTx.wait();
     expect(createPairReceipt.status).to.equal(1);
 
@@ -130,7 +134,6 @@ describe("CAMM Tests", function () {
       .encrypt();
 
     //Here amount0 = amount of token0 (EUR on pair)
-    //const eventPromise = pollSpecificEvent(pair, "priceInfoUpdated", "add liquidity (first mint)");
     const addLiqTx = await pair["addLiquidity(bytes32,bytes32,uint256,bytes)"](
       encryptedAddLiqInput.handles[0],
       encryptedAddLiqInput.handles[1],
@@ -140,9 +143,6 @@ describe("CAMM Tests", function () {
 
     const addLiqReceipt = await addLiqTx.wait();
     expect(addLiqReceipt.status).to.equal(1);
-
-    //await fhevm.awaitDecryptionOracle();
-    //await eventPromise;
 
     const encryptedBalance1After = await token1.confidentialBalanceOf(this.signers[0].address);
     const clearBalance1After = await fhevm.userDecryptEuint(
@@ -180,7 +180,6 @@ describe("CAMM Tests", function () {
 
   it("Should retrieve first approx price", async function () {
     const pair = this.pair;
-    // const price = await pair.currentPrice();
 
     const getPermissionTx = await pair.requestReserveInfo();
     const getPermissionReceipt = await getPermissionTx.wait();
