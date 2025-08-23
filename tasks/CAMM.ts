@@ -95,11 +95,11 @@ async function setOperator(token: ConfidentialToken, operatorAddress: AddressLik
 }
 
 async function getCurrentPrice(fhevm: HardhatFhevmRuntimeEnvironment, pair: CAMMPair, signer: HardhatEthersSigner) {
-  const requestTx = await pair.requestReserveInfo();
-  const requestReceipt = await requestTx.wait();
-  if (!requestReceipt?.status) {
-    throw new Error("Request reserve info Tx failed.");
-  }
+  // const requestTx = await pair.requestReserveInfo();
+  // const requestReceipt = await requestTx.wait();
+  // if (!requestReceipt?.status) {
+  //   throw new Error("Request reserve info Tx failed.");
+  // }
 
   const { obfuscatedReserve0, obfuscatedReserve1 } = await pair.obfuscatedReserves();
   const clearObfuscatedReserve0 = await decryptPairEuint128(obfuscatedReserve0, fhevm, pair, signer);
@@ -133,7 +133,7 @@ task("task:deploy_camm", "Deploys the CAMM contracts").setAction(async function 
   const token1Address = await token1Contract.getAddress();
   console.log(`Token1 deployed at : ${token1Address}`);
 
-  const createPairTx = await CAMMFactoryContract.createPair(token0Address, token1Address);
+  const createPairTx = await CAMMFactoryContract.createPair(token0Address, token1Address, deployer.address);
   await createPairTx.wait();
   const pairAddress = await CAMMFactoryContract.getPair(token0Address, token1Address);
   console.log(`Pair deployed at : ${pairAddress}`);
@@ -257,7 +257,7 @@ task("task:add_liquidity", "Adds liquidity to the pair.")
     }
 
     const eventPromise = new Promise<{ blockNumber: bigint; user: string; txHash?: string }>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for liquidityMinted after 1m")), 60_000);
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for liquidityMinted after 3m")), 180_000);
 
       const ev = pair.getEvent("liquidityMinted");
 
@@ -284,7 +284,7 @@ task("task:add_liquidity", "Adds liquidity to the pair.")
     const addLiqTx = await pair["addLiquidity(bytes32,bytes32,uint256,bytes)"](
       encryptedParam.handles[0],
       encryptedParam.handles[1],
-      blockTimestamp + 120,
+      blockTimestamp + 12000,
       encryptedParam.inputProof,
     );
     const addLiqReceipt = await addLiqTx.wait();
@@ -454,7 +454,7 @@ task("task:remove_liquidity", "Removes liquidity from the pair.")
     }
 
     const eventPromise = new Promise<{ blockNumber: bigint; user: string; txHash?: string }>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for liquidityBurnt after 1m")), 180_000);
+      const timer = setTimeout(() => reject(new Error("Timed out waiting for liquidityBurnt after 3m")), 180_000);
 
       const ev = pair.getEvent("liquidityBurnt");
 
@@ -492,5 +492,4 @@ task("task:remove_liquidity", "Removes liquidity from the pair.")
     }
 
     await eventPromise;
-
   });
