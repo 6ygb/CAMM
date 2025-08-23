@@ -24,6 +24,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     // Addresses of the factory and associated tokens
     address public factory;
+    address public cammPriceScanner;
     IConfidentialFungibleToken public token0;
     IConfidentialFungibleToken public token1;
 
@@ -91,8 +92,9 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @dev Constructor for the pair contract.
      * Sets the factory address and initializes the token.
      */
-    constructor() ConfidentialFungibleToken("Liquidity Token", "PAIR", "") {
+    constructor(address _cammPriceScanner) ConfidentialFungibleToken("Liquidity Token", "PAIR", "") {
         factory = msg.sender;
+        cammPriceScanner = _cammPriceScanner;
 
         ZERO = FHE.asEuint64(0);
 
@@ -191,6 +193,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         FHE.allowThis(obfuscatedReserves.obfuscatedReserve1);
 
         //Allow CAMM price scanner address
+        FHE.allow(obfuscatedReserves.obfuscatedReserve0, cammPriceScanner);
+        FHE.allow(obfuscatedReserves.obfuscatedReserve1, cammPriceScanner);
     }
 
     function requestReserveInfo() public {
