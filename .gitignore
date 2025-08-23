@@ -24,4 +24,4 @@ standard-inputs
 coverage.json
 pnpm-lock.yaml
 yarn.lock
-TOTP.json
+CAMM.json
