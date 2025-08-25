@@ -20,6 +20,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     euint64 private immutable ZERO;
     uint64 public immutable scalingFactor;
     uint64 public immutable MINIMIMUM_LIQUIDITY;
+    uint256 private constant MAX_DECRYPTION_TIME = 5 minutes;
     bool private min_liq_locked = false;
 
     // Addresses of the factory and associated tokens
@@ -84,6 +85,14 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     }
     mapping(uint256 requestID => swapOutputStruct) private swapOutput;
 
+    struct pendingDecryptionStruct {
+        uint256 currentRequestID;
+        bool isPendingDecryption;
+        uint256 decryptionTimestamp;
+    }
+
+    pendingDecryptionStruct private pendingDecryption;
+
     // Events
     event liquidityMinted(uint256 blockNumber, address user);
     event liquidityBurnt(uint256 blockNumber, address user);
@@ -114,6 +123,21 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      */
     modifier ensure(uint256 deadlineTimestamp) {
         require(block.timestamp < deadlineTimestamp, "CAMM: EXPIRED");
+        _;
+    }
+
+    /**
+     * @dev Modifier to ensure that pool is not in the middle of a decryption process.
+     */
+    modifier decryptionAvailable() {
+        // Here we make sure there are no pending decryption.
+        // In some cases the decryption request is sent but is never fulfilled.
+        // In such cases we make sure the last decryption request was more than 5 minutes ago, to not block indefinitly the pair.
+        require(
+            pendingDecryption.isPendingDecryption == false ||
+                block.timestamp >= pendingDecryption.decryptionTimestamp + MAX_DECRYPTION_TIME,
+            "CAMM: Pending Decryption"
+        );
         _;
     }
 
@@ -374,7 +398,12 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @param from The address that adds liquidity.
      * @param deadline Timestamp by which the liquidity computinh must be completed.
      */
-    function _addLiquidity(euint64 amount0, euint64 amount1, address from, uint256 deadline) internal ensure(deadline) {
+    function _addLiquidity(
+        euint64 amount0,
+        euint64 amount1,
+        address from,
+        uint256 deadline
+    ) internal ensure(deadline) decryptionAvailable {
         if (!min_liq_locked) {
             //sending the tokens and adding them to pool
             (euint64 sentAmount0, euint64 sentAmount1) = _transferTokensToPool(from, amount0, amount1, true);
@@ -411,6 +440,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
             FHE.allowThis(addLiqDecBundle[requestID]._sentAmount1);
             FHE.allowThis(addLiqDecBundle[requestID]._partialupperPart0);
             FHE.allowThis(addLiqDecBundle[requestID]._partialupperPart1);
+
+            pendingDecryption.currentRequestID = requestID;
+            pendingDecryption.decryptionTimestamp = block.timestamp;
+            pendingDecryption.isPendingDecryption = true;
         }
     }
 
@@ -422,6 +455,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint128 _obfuscatedReserve1,
         bytes[] memory signatures
     ) external {
+        require(pendingDecryption.currentRequestID == requestID, "CAMM: Wrong requestID");
         FHE.checkSignatures(requestID, signatures);
 
         uint128 priceToken0 = _obfuscatedReserve0 / (_obfuscatedReserve1 / scalingFactor);
@@ -456,6 +490,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         _transferTokensFromPool(user, refundAmount0, refundAmount1, false);
         _mintLP(mintAmount, user);
         _updateReserves(FHE.add(reserve0, amount0), FHE.add(reserve1, amount1));
+
+        pendingDecryption.currentRequestID = 0;
+        pendingDecryption.decryptionTimestamp = 0;
+        pendingDecryption.isPendingDecryption = false;
     }
 
     /**
@@ -465,7 +503,12 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @param to The address that will receive the tokens after lp burn.
      * @param deadline Timestamp by which the liquidity removal must be completed.
      */
-    function _removeLiquidity(euint64 lpAmount, address from, address to, uint256 deadline) internal ensure(deadline) {
+    function _removeLiquidity(
+        euint64 lpAmount,
+        address from,
+        address to,
+        uint256 deadline
+    ) internal ensure(deadline) decryptionAvailable {
         euint64 sentLP = _transferLPToPool(from, lpAmount);
 
         euint16 rng0 = _RNG(); // 184_000 HCU
@@ -500,6 +543,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         FHE.allowThis(removeLiqDecBundle[requestID]._lpSent);
         FHE.allowThis(removeLiqDecBundle[requestID]._upperPart0);
         FHE.allowThis(removeLiqDecBundle[requestID]._upperPart1);
+
+        pendingDecryption.currentRequestID = requestID;
+        pendingDecryption.decryptionTimestamp = block.timestamp;
+        pendingDecryption.isPendingDecryption = true;
     }
 
     function removeLiquidityCallback(
@@ -508,6 +555,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint128 divLowerPart1,
         bytes[] memory signatures
     ) external {
+        require(pendingDecryption.currentRequestID == requestID, "CAMM: Wrong requestID");
         FHE.checkSignatures(requestID, signatures);
 
         euint64 burnAmount = removeLiqDecBundle[requestID]._lpSent;
@@ -522,6 +570,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         _transferTokensFromPool(to, amount0Out, amount1Out, true);
         _burn(address(this), burnAmount);
         emit liquidityBurnt(block.number, from);
+
+        pendingDecryption.currentRequestID = 0;
+        pendingDecryption.decryptionTimestamp = 0;
+        pendingDecryption.isPendingDecryption = false;
     }
 
     /**
@@ -622,7 +674,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         address from,
         address to,
         uint256 deadline
-    ) internal ensure(deadline) {
+    ) internal ensure(deadline) decryptionAvailable {
         (euint64 sent0, euint64 sent1) = _transferTokensToPool(from, amount0In, amount1In, true);
         //uint16 max                        65,535
         //uint64 max                        18,446,744,073,709,551,615
@@ -666,6 +718,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         FHE.allowThis(swapDecBundle[requestID].divUpperPart1);
         FHE.allowThis(swapDecBundle[requestID].amount0In);
         FHE.allowThis(swapDecBundle[requestID].amount1In);
+
+        pendingDecryption.currentRequestID = requestID;
+        pendingDecryption.decryptionTimestamp = block.timestamp;
+        pendingDecryption.isPendingDecryption = true;
     }
 
     function swapTokensCallback(
@@ -674,6 +730,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint128 _divLowerPart1,
         bytes[] memory signatures
     ) external {
+        require(pendingDecryption.currentRequestID == requestID, "CAMM: Wrong requestID");
         FHE.checkSignatures(requestID, signatures);
 
         euint128 _divUpperPart0 = swapDecBundle[requestID].divUpperPart0;
@@ -710,5 +767,9 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
             swapOutput[requestID].amount1Out,
             to
         );
+
+        pendingDecryption.currentRequestID = 0;
+        pendingDecryption.decryptionTimestamp = 0;
+        pendingDecryption.isPendingDecryption = false;
     }
 }
