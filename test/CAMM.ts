@@ -519,6 +519,212 @@ describe("CAMM Tests", function () {
     log_str = `LP balance after removing liquidity : ${clearLPBalanceAfter / this.decimals}`;
     log(log_str, "remove liquidity");
   });
+
+  it("Should test liquidity adding refund", async function () {
+    const pair = this.pair;
+    const token1 = this.token1; // USD
+    const token2 = this.token2; // EUR
+
+    const block = await this.provider.getBlock("latest");
+    const blockTimestamp = block.timestamp;
+    const deadlineTimestamp = blockTimestamp + 1000;
+
+    const addLiqInput = fhevm.createEncryptedInput(await pair.getAddress(), this.signers[0].address);
+    const encryptedAddLiqInput = await addLiqInput
+      .add64(BigInt(5_000) * this.decimals)
+      .add64(BigInt(5_000) * this.decimals)
+      .encrypt();
+
+    const eventPromise = pollSpecificEvent(pair, "decryptionRequested", "liquidity adding refund");
+
+    const addLiqTx = await pair["addLiquidity(bytes32,bytes32,uint256,bytes)"](
+      encryptedAddLiqInput.handles[0],
+      encryptedAddLiqInput.handles[1],
+      deadlineTimestamp,
+      encryptedAddLiqInput.inputProof,
+    );
+    const addLiqReceipt = await addLiqTx.wait();
+    expect(addLiqReceipt.status).to.equal(1);
+
+    const encryptedBalance1Before = await token1.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance1Before = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance1Before,
+      await token1.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 1 before : ${clearBalance1Before / this.decimals}`;
+    log(log_str, "liquidity adding refund");
+
+    const encryptedBalance2Before = await token2.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance2Before = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance2Before,
+      await token2.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 2 before : ${clearBalance2Before / this.decimals}`;
+    log(log_str, "liquidity adding refund");
+
+    const eventParams = await eventPromise;
+    const requestID = eventParams[2];
+
+    const eventPromise2 = pollSpecificEvent(pair, "Refund", "liquidity adding refund");
+    const refundTx = await pair.requestLiquidityAddingRefund(requestID);
+    const refundReceipt = await refundTx.wait();
+    expect(refundReceipt.status).to.equal(1);
+
+    await eventPromise2;
+
+    const encryptedBalance1After = await token1.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance1After = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance1After,
+      await token1.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 1 after : ${clearBalance1After / this.decimals}`;
+    log(log_str, "liquidity adding refund");
+
+    const encryptedBalance2After = await token2.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance2After = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance2After,
+      await token2.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 2 after : ${clearBalance2After / this.decimals}`;
+    log(log_str, "liquidity adding refund");
+  });
+
+  it("Should test swap refund", async function () {
+    const pair = this.pair;
+    const token1 = this.token1; // USD
+    const token2 = this.token2; // EUR
+
+    const block = await this.provider.getBlock("latest");
+    const blockTimestamp = block.timestamp;
+    const deadlineTimestamp = blockTimestamp + 1000;
+
+    const swapInput = fhevm.createEncryptedInput(await pair.getAddress(), this.signers[0].address);
+    const encryptedSwapInut = await swapInput
+      .add64(BigInt(5_000) * this.decimals)
+      .add64(BigInt(5_000) * this.decimals)
+      .encrypt();
+
+    const eventPromise = pollSpecificEvent(pair, "decryptionRequested", "swap refund");
+
+    const swapTx = await pair["swapTokens(bytes32,bytes32,address,uint256,bytes)"](
+      encryptedSwapInut.handles[0],
+      encryptedSwapInut.handles[1],
+      this.signers[0].address,
+      deadlineTimestamp,
+      encryptedSwapInut.inputProof,
+    );
+    const swapReceitp = await swapTx.wait();
+    expect(swapReceitp.status).to.equal(1);
+
+    const encryptedBalance1Before = await token1.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance1Before = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance1Before,
+      await token1.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 1 before : ${clearBalance1Before / this.decimals}`;
+    log(log_str, "swap refund");
+
+    const encryptedBalance2Before = await token2.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance2Before = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance2Before,
+      await token2.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 2 before : ${clearBalance2Before / this.decimals}`;
+    log(log_str, "swap refund");
+
+    const eventParams = await eventPromise;
+    const requestID = eventParams[2];
+
+    const eventPromise2 = pollSpecificEvent(pair, "Refund", "swap refund");
+    const refundTx = await pair.requestSwapRefund(requestID);
+    const refundReceipt = await refundTx.wait();
+    expect(refundReceipt.status).to.equal(1);
+
+    await eventPromise2;
+
+    const encryptedBalance1After = await token1.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance1After = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance1After,
+      await token1.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 1 after : ${clearBalance1After / this.decimals}`;
+    log(log_str, "swap refund");
+
+    const encryptedBalance2After = await token2.confidentialBalanceOf(this.signers[0].address);
+    const clearBalance2After = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedBalance2After,
+      await token2.getAddress(),
+      this.signers[0],
+    );
+    log_str = `Balance 2 after : ${clearBalance2After / this.decimals}`;
+    log(log_str, "swap refund");
+  });
+
+  it("Should test liquidity removal refund.", async function () {
+    const pair = this.pair;
+
+    const block = await this.provider.getBlock("latest");
+    const blockTimestamp = block.timestamp;
+
+    const eventPromise = pollSpecificEvent(pair, "decryptionRequested", "liquidity removal refund");
+
+    const removeLiqInput = fhevm.createEncryptedInput(await pair.getAddress(), this.signers[0].address);
+    const encryptedRemoveLiqInput = await removeLiqInput.add64(BigInt(2000) * this.decimals).encrypt();
+
+    const removeLiqTx = await pair["removeLiquidity(bytes32,address,uint256,bytes)"](
+      encryptedRemoveLiqInput.handles[0],
+      this.signers[0].address,
+      blockTimestamp + 10000,
+      encryptedRemoveLiqInput.inputProof,
+    );
+    const removeLiqReceipt = await removeLiqTx.wait();
+    expect(removeLiqReceipt.status).to.equal(1);
+
+    const encryptedLPBalanceBefore = await pair.confidentialBalanceOf(this.signers[0].address);
+    const clearLPBalanceBefore = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedLPBalanceBefore,
+      await pair.getAddress(),
+      this.signers[0],
+    );
+    log_str = `LP balance before getting refund : ${clearLPBalanceBefore / this.decimals}`;
+    log(log_str, "liquidity removal refund");
+
+    const eventParams = await eventPromise;
+    const requestID = eventParams[2];
+
+    const eventPromise2 = pollSpecificEvent(pair, "Refund", "liquidity removal refund");
+    const refundTx = await pair.requestLiquidityRemovalRefund(requestID);
+    const refundReceipt = await refundTx.wait();
+    expect(refundReceipt.status).to.equal(1);
+
+    await eventPromise2;
+
+    const encryptedLPBalanceAfter = await pair.confidentialBalanceOf(this.signers[0].address);
+    const clearLPBalanceAfter = await fhevm.userDecryptEuint(
+      FhevmType.euint64,
+      encryptedLPBalanceAfter,
+      await pair.getAddress(),
+      this.signers[0],
+    );
+    log_str = `LP balance after getting liquidity refund : ${clearLPBalanceAfter / this.decimals}`;
+    log(log_str, "liquidity removal refund");
+  });
 });
 
 const log = (message: string, scope: string) => {
