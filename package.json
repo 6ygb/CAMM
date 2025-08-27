@@ -31,7 +31,8 @@
     "chart.js": "^4.5.0",
     "chartjs-node-canvas": "^5.0.0",
     "chartjs-plugin-annotation": "^3.1.0",
-    "chartjs-plugin-datalabels": "^2.2.0"
+    "chartjs-plugin-datalabels": "^2.2.0",
+    "hardhat-contract-sizer": "^2.10.1"
   },
   "devDependencies": {
     "@fhevm/hardhat-plugin": "0.0.1-3",
