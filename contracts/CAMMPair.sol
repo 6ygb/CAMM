@@ -9,10 +9,84 @@ import "@openzeppelin/confidential-contracts/token/ConfidentialFungibleToken.sol
 /**
  * @title CAMMPair
  * @dev Confidential Automated Market Maker Pair.
- * This contract implements liquidity provision, token swapping, and batch settlement using confidential computations.
- * Inspired by UniswapV2 : https://docs.uniswap.org/contracts/v2/overview
+ *      This contract implements liquidity provision, token swapping, and batch settlement using confidential computations.
+ *      Inspired by UniswapV2 : https://docs.uniswap.org/contracts/v2/overview
  */
 contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
+    // Structs
+    struct addLiqDecBundleStruct {
+        euint64 _sentAmount0;
+        euint64 _sentAmount1;
+        euint128 _partialupperPart0;
+        euint128 _partialupperPart1;
+        address _user;
+    }
+    struct removeLiqDecBundleStruct {
+        euint64 _lpSent;
+        euint128 _upperPart0;
+        euint128 _upperPart1;
+        address _from;
+        address _to;
+    }
+    struct obfuscatedReservesStruct {
+        euint128 obfuscatedReserve0;
+        euint128 obfuscatedReserve1;
+    }
+    struct swapDecBundleStruct {
+        euint128 divUpperPart0;
+        euint128 divUpperPart1;
+        euint64 amount0In;
+        euint64 amount1In;
+        address from;
+        address to;
+    }
+    struct swapOutputStruct {
+        euint64 amount0Out;
+        euint64 amount1Out;
+    }
+    struct pendingDecryptionStruct {
+        uint256 currentRequestID;
+        bool isPendingDecryption;
+        uint256 decryptionTimestamp;
+    }
+    struct standardRefundStruct {
+        euint64 amount0;
+        euint64 amount1;
+    }
+    struct liquidityRemovalRefundStruct {
+        euint64 lpAmount;
+    }
+
+    // Mappings
+    mapping(uint256 requestID => addLiqDecBundleStruct) private addLiqDecBundle;
+    mapping(uint256 requestID => removeLiqDecBundleStruct) private removeLiqDecBundle;
+    mapping(uint256 requestID => swapDecBundleStruct) private swapDecBundle;
+    mapping(uint256 requestID => swapOutputStruct) private swapOutput;
+    mapping(address from => mapping(uint256 requestID => standardRefundStruct)) public standardRefund;
+    mapping(address from => mapping(uint256 requestID => liquidityRemovalRefundStruct)) public liquidityRemovalRefund;
+
+    // Events
+    event liquidityMinted(uint256 blockNumber, address user);
+    event liquidityBurnt(uint256 blockNumber, address user);
+    event decryptionRequested(address from, uint256 blockNumber, uint256 requestID);
+    event Swap(address from, euint64 amount0In, euint64 amount1In, euint64 amount0Out, euint64 amount1Out, address to);
+    event Refund(address from, uint256 blockNumber, uint256 requestID);
+    event discloseReservesInfo(
+        uint256 blockNumber,
+        address user,
+        euint128 obfuscatedReserve0,
+        euint128 obfuscatedReserve1
+    );
+
+    // Errors
+    error Expired();
+    error PendingDecryption(uint256 until);
+    error Forbidden();
+    error WrongRequestID();
+    error DecryptionBlocked();
+    error NoRefund();
+
+    // Variables
     // Predefined constants and initial values
     euint64 private immutable ZERO;
     uint64 public immutable scalingFactor;
@@ -30,89 +104,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     euint64 private reserve0;
     euint64 private reserve1;
 
-    struct addLiqDecBundleStruct {
-        euint64 _sentAmount0;
-        euint64 _sentAmount1;
-        euint128 _partialupperPart0;
-        euint128 _partialupperPart1;
-        address _user;
-    }
-
-    mapping(uint256 requestID => addLiqDecBundleStruct) private addLiqDecBundle;
-
-    struct removeLiqDecBundleStruct {
-        euint64 _lpSent;
-        euint128 _upperPart0;
-        euint128 _upperPart1;
-        address _from;
-        address _to;
-    }
-
-    mapping(uint256 requestID => removeLiqDecBundleStruct) private removeLiqDecBundle;
-
-    struct obfuscatedReservesStruct {
-        euint128 obfuscatedReserve0;
-        euint128 obfuscatedReserve1;
-    }
-
     obfuscatedReservesStruct public obfuscatedReserves;
-
-    event discloseReservesInfo(
-        uint256 blockNumber,
-        address user,
-        euint128 obfuscatedReserve0,
-        euint128 obfuscatedReserve1
-    );
-
-    event Swap(address from, euint64 amount0In, euint64 amount1In, euint64 amount0Out, euint64 amount1Out, address to);
-
-    struct swapDecBundleStruct {
-        euint128 divUpperPart0;
-        euint128 divUpperPart1;
-        euint64 amount0In;
-        euint64 amount1In;
-        address from;
-        address to;
-    }
-    mapping(uint256 requestID => swapDecBundleStruct) private swapDecBundle;
-
-    struct swapOutputStruct {
-        euint64 amount0Out;
-        euint64 amount1Out;
-    }
-    mapping(uint256 requestID => swapOutputStruct) private swapOutput;
-
-    struct pendingDecryptionStruct {
-        uint256 currentRequestID;
-        bool isPendingDecryption;
-        uint256 decryptionTimestamp;
-    }
-
     pendingDecryptionStruct private pendingDecryption;
-
-    struct standardRefundStruct {
-        euint64 amount0;
-        euint64 amount1;
-    }
-    mapping(address from => mapping(uint256 requestID => standardRefundStruct)) public standardRefund;
-
-    struct liquidityRemovalRefundStruct {
-        euint64 lpAmount;
-    }
-    mapping(address from => mapping(uint256 requestID => liquidityRemovalRefundStruct)) public liquidityRemovalRefund;
-
-    // Events
-    event liquidityMinted(uint256 blockNumber, address user);
-    event liquidityBurnt(uint256 blockNumber, address user);
-    event decryptionRequested(address from, uint256 blockNumber, uint256 requestID);
-    event Refund(address from, uint256 blockNumber, uint256 requestID);
-
-    error Expired();
-    error PendingDecryption(uint256 until);
-    error Forbidden();
-    error WrongRequestID();
-    error DecryptionBlocked();
-    error NoRefund();
 
     /**
      * @dev Constructor for the pair contract.
@@ -161,7 +154,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Initializes the pair contract with the addresses of the two tokens.
-     * This function can only be called once by the factory contract.
+     *      This function can only be called once by the factory contract.
      * @param _token0 Address of the first token in the pair.
      * @param _token1 Address of the second token in the pair.
      */
@@ -205,6 +198,12 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         _updateObfuscatedReserves();
     }
 
+    /**
+     * @dev Recomputes and stores obfuscated reserves using randomized multipliers,
+     *      then updates ACL so this contract and the price scanner can read them.
+     *      This helps publish reserve-like values without revealing exact reserves.
+     *      Computed price from obfuscated reserve is +- 10% close to the real price.
+     */
     function _updateObfuscatedReserves() internal {
         euint16 percentage = _RNG_Bounded(256, 70);
 
@@ -239,6 +238,11 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         FHE.allow(obfuscatedReserves.obfuscatedReserve1, cammPriceScanner);
     }
 
+    /**
+     * @dev Grants temporary read access to the caller for the obfuscated reserves
+     *      and emits an event carrying those encrypted values.
+     *      Useful for off-chain consumers to pick up fresh obfuscated data.
+     */
     function requestReserveInfo() public {
         FHE.allow(obfuscatedReserves.obfuscatedReserve0, msg.sender);
         FHE.allow(obfuscatedReserves.obfuscatedReserve1, msg.sender);
@@ -326,7 +330,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Mints liquidity tokens for the user.
-     * If this is the first liquidity addition, enforces the minimum liquidity constraint.
+     *      If this is the first liquidity addition, enforces the minimum liquidity constraint.
      * @param liquidityAmount The amount of liquidity tokens to mint.
      * @param user The address to receive the minted liquidity tokens.
      */
@@ -344,7 +348,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Handles the initial liquidity mint ensuring minimum liquidity constraints.
-     * Refunds tokens to the user if the provided amounts are below the minimum liquidity.
+     *      Refunds tokens to the user if the provided amounts are below the minimum liquidity.
      * @param to The address to receive liquidity tokens.
      * @param amount0 The amount of token0 provided.
      * @param amount1 The amount of token1 provided.
@@ -370,8 +374,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev External function that manage liquidity adding.
-     * This function is called by another smart contract.
-     * The important logic is in _addLiquidity().
+     *      This function is called by another smart contract.
+     *      The important logic is in _addLiquidity().
      * @param amount0 The amount of token0 added to the liquidity.
      * @param amount1 The amount of token1 added to the liquidity.
      * @param deadline Timestamp by which the liquidity adding must be completed.
@@ -386,8 +390,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev External function that manage liquidity adding.
-     * This function is called by a user (using a dApp).
-     * The important logic is in _addLiquidity().
+     *      This function is called by a user (using a dApp).
+     *      The important logic is in _addLiquidity().
      * @param encryptedAmount0 The encrypted amount of token0 added to the liquidity.
      * @param encryptedAmount1 The encrypted amount of token1 added to the liquidity.
      * @param deadline Timestamp by which the liquidity adding must be completed.
@@ -475,6 +479,17 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         }
     }
 
+    /**
+     * @dev Callback for an add-liquidity decryption request.
+     *      Verifies the request, reconstructs pricing targets from obfuscated reserves,
+     *      computes the LP mint amount, refunds any excess tokens, mints LP, and updates reserves.
+     * @param requestID Gateway request identifier expected to match the pending one.
+     * @param divLowerPart0 Decrypted divisor component for token0 side.
+     * @param divLowerPart1 Decrypted divisor component for token1 side.
+     * @param _obfuscatedReserve0 Decrypted obfuscated reserve for token0 (for price).
+     * @param _obfuscatedReserve1 Decrypted obfuscated reserve for token1 (for price).
+     * @param signatures Gateway signatures attesting the decryption result.
+     */
     function addLiquidityCallback(
         uint256 requestID,
         uint128 divLowerPart0,
@@ -611,8 +626,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Removes liquidity from the pool.
-     * Allows a liquidity provider to change its liquidity tokens to token0 and token1.
-     * This function is called by another contract.
+     *      Allows a liquidity provider to change its liquidity tokens to token0 and token1.
+     *      This function is called by another contract.
      * @param lpAmount Amount of lp token to remove.
      * @param to Address to receive the tokens.
      * @param deadline timestamp by which the liquidity removal must be completed.
@@ -623,8 +638,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Removes liquidity from the pool.
-     * Allows a liquidity provider to change its liquidity tokens to token0 and token1.
-     * This function is called off-chain (from a dApp for example).
+     *      Allows a liquidity provider to change its liquidity tokens to token0 and token1.
+     *      This function is called off-chain (from a dApp for example).
      * @param encryptedLPAmount Amount of lp token to remove.
      * @param to Address to receive the tokens.
      * @param deadline timestamp by which the liquidity removal must be completed.
@@ -643,10 +658,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Executes a swap operation within the pool.
-     * Allows users to exchange `token0` for `token1` or vice versa.
-     * Updates pending swaps for the current trading epoch and adjusts reserves.
-     * Either amount0In or amount1In is null for a classic swap.
-     * This function is called by another contract.
+     *      Allows users to exchange `token0` for `token1` or vice versa.
+     *      Updates pending swaps for the current trading epoch and adjusts reserves.
+     *      Either amount0In or amount1In is null for a classic swap.
+     *      This function is called by another contract.
      * @param amount0In Amount of `token0` being swapped into the pool.
      * @param amount1In Amount of `token1` being swapped into the pool.
      * @param to Address to receive the swapped tokens.
@@ -662,9 +677,9 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Executes a swap operation using encrypted token inputs.
-     * Similar to the standard `swapTokens`, but uses encrypted inputs for the tokens being swapped.
-     * Decrypts the inputs using the provided proof.
-     * This function is called off-chain (from a dApp for example).
+     *      Similar to the standard `swapTokens`, but uses encrypted inputs for the tokens being swapped.
+     *      Decrypts the inputs using the provided proof.
+     *      This function is called off-chain (from a dApp for example).
      * @param encryptedAmount0In Encrypted amount of `token0` being swapped into the pool.
      * @param encryptedAmount1In Encrypted amount of `token1` being swapped into the pool.
      * @param to Address to receive the swapped tokens.
@@ -690,11 +705,11 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     /**
      * @dev Executes a swap operation within the pool.
-     * Internal function
-     * Allows users to exchange `token0` for `token1` or vice versa.
-     * Updates pending swaps for the current trading epoch and adjusts reserves.
-     * Either amount0In or amount1In is null for a classic swap.
-     * This function is only called by this contract.
+     *      Internal function
+     *      Allows users to exchange `token0` for `token1` or vice versa.
+     *      Updates pending swaps for the current trading epoch and adjusts reserves.
+     *      Either amount0In or amount1In is null for a classic swap.
+     *      This function is only called by this contract.
      * @param amount0In Amount of `token0` being swapped into the pool.
      * @param amount1In Amount of `token1` being swapped into the pool.
      * @param to Address to receive the swapped tokens.
@@ -767,6 +782,16 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         emit decryptionRequested(from, block.number, requestID);
     }
 
+    /**
+     * @dev Callback for a swap decryption request.
+     *      Verifies the request, computes swap outputs from decrypted divisors,
+     *      transfers tokens to the recipient, exposes I/O to the sender via ACL,
+     *      emits the Swap event, and clears pending state/refund.
+     * @param requestID Gateway request identifier expected to match the pending one.
+     * @param _divLowerPart0 Decrypted divisor for token0 output calculation.
+     * @param _divLowerPart1 Decrypted divisor for token1 output calculation.
+     * @param signatures Gateway signatures attesting the decryption result.
+     */
     function swapTokensCallback(
         uint256 requestID,
         uint128 _divLowerPart0,
@@ -815,6 +840,13 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         delete standardRefund[from][requestID];
     }
 
+    /**
+     * @dev Requests a refund for a pending add-liquidity operation.
+     *      Sends back the original token inputs (without altering reserves),
+     *      cancels the pending decryption if it corresponds to this request,
+     *      and clears stored refund data.
+     * @param requestID Gateway request ID associated with the pending add-liquidity.
+     */
     function requestLiquidityAddingRefund(uint256 requestID) public {
         if (
             !FHE.isInitialized(standardRefund[msg.sender][requestID].amount0) ||
@@ -836,6 +868,13 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         emit Refund(msg.sender, block.number, requestID);
     }
 
+    /**
+     * @dev Requests a refund for a pending swap operation.
+     *      Returns the input tokens to the caller (reserves are restored),
+     *      cancels the pending decryption if it corresponds to this request,
+     *      and clears stored refund data.
+     * @param requestID Gateway request ID associated with the pending swap.
+     */
     function requestSwapRefund(uint256 requestID) public {
         if (
             !FHE.isInitialized(standardRefund[msg.sender][requestID].amount0) ||
@@ -856,6 +895,13 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         emit Refund(msg.sender, block.number, requestID);
     }
 
+    /**
+     * @dev Requests a refund for a pending remove-liquidity operation.
+     *      Transfers the LP tokens (held by the pair) back to the caller,
+     *      cancels the pending decryption if it corresponds to this request,
+     *      and clears stored refund data.
+     * @param requestID Gateway request ID associated with the pending liquidity removal.
+     */
     function requestLiquidityRemovalRefund(uint256 requestID) public {
         if (!FHE.isInitialized(liquidityRemovalRefund[msg.sender][requestID].lpAmount)) revert NoRefund();
 
