@@ -11,6 +11,7 @@ type CAMMConfig = {
   PAIR_ADDRESS?: string;
   TOKEN0_ADDRESS?: string;
   TOKEN1_ADDRESS?: string;
+  LIQ_ADDED?: boolean;
 };
 
 const CAMM_JSON_PATH = path.resolve(__dirname, "..", "CAMM.json");
@@ -110,6 +111,66 @@ async function getCurrentPrice(fhevm: HardhatFhevmRuntimeEnvironment, pair: CAMM
   return { priceToken0Token1, priceToken1Token0 };
 }
 
+async function waitForDecryptionRequested(
+  pair: CAMMPair,
+  timeoutMs = 180_000,
+): Promise<{ from: string; blockNumber: bigint; requestID: bigint; txHash?: string }> {
+  return new Promise((resolve, reject) => {
+    const ev = pair.getEvent("decryptionRequested"); // TypedContractEvent
+    // eslint-disable-next-line prefer-const
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onEvent = (from: string, blockNumber: bigint, requestID: bigint, event: any) => {
+      if (timer) clearTimeout(timer);
+      console.log(
+        `[EVENT] decryptionRequested from=${from} block=${blockNumber.toString()} reqID=${requestID.toString()} \ntx=${event?.log?.transactionHash ?? "?"}`,
+      );
+      resolve({ from, blockNumber, requestID, txHash: event?.log?.transactionHash });
+    };
+
+    void pair.once(ev, onEvent).catch((err: unknown) => {
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
+
+    timer = setTimeout(() => {
+      reject(new Error(`Timed out waiting for decryptionRequested after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+}
+
+async function waitForRefund(
+  pair: CAMMPair,
+  timeoutMs = 180_000,
+): Promise<{ from: string; blockNumber: bigint; requestID: bigint; txHash?: string }> {
+  return new Promise((resolve, reject) => {
+    const ev = pair.getEvent("Refund"); // TypedContractEvent
+    // eslint-disable-next-line prefer-const
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // Let TS infer param types from the typed event; annotate if you prefer.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const onRefund = (from: string, blockNumber: bigint, requestID: bigint, event: any) => {
+      if (timer) clearTimeout(timer);
+      console.log(
+        `[EVENT] Refund from=${from} block=${blockNumber.toString()} reqID=${requestID.toString()}` +
+          `\ntx=${event?.log?.transactionHash ?? "?"}`,
+      );
+      resolve({ from, blockNumber, requestID, txHash: event?.log?.transactionHash });
+    };
+
+    void pair.once(ev, onRefund).catch((err: unknown) => {
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
+
+    timer = setTimeout(() => {
+      reject(new Error(`Timed out waiting for Refund after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+}
+
 task("task:deploy_camm", "Deploys the CAMM contracts").setAction(async function (_taskArguments: TaskArguments, hre) {
   console.log("Deploying CAMM contracts.");
   const { ethers } = hre;
@@ -144,6 +205,7 @@ task("task:deploy_camm", "Deploys the CAMM contracts").setAction(async function 
     PAIR_ADDRESS: pairAddress,
     TOKEN0_ADDRESS: token0Address,
     TOKEN1_ADDRESS: token1Address,
+    LIQ_ADDED: false,
   });
 });
 
@@ -216,11 +278,15 @@ task("task:add_liquidity", "Adds liquidity to the pair.")
     const token0Address = cfg.TOKEN0_ADDRESS;
     const token1Address = cfg.TOKEN1_ADDRESS;
     const pairAddress = cfg.PAIR_ADDRESS;
+    const liqAdded = cfg.LIQ_ADDED;
     if (!token0Address || !token1Address) {
       throw new Error("Token addresses not defined in CAMM.json");
     }
     if (!pairAddress) {
       throw new Error("Pair address not defined in CAMM.json");
+    }
+    if (liqAdded === undefined) {
+      throw new Error("Liq Added not defined in CAMM.json");
     }
 
     const { ethers, fhevm } = hre;
@@ -254,6 +320,11 @@ task("task:add_liquidity", "Adds liquidity to the pair.")
       console.log("Setting pair as an Operator of signer on token 1.");
       await setOperator(token1, pairAddress, targetTimestamp);
       console.log("Pair is now an operator of the signer on token 1.");
+    }
+
+    let decryptionRequestedEvent;
+    if (liqAdded) {
+      decryptionRequestedEvent = waitForDecryptionRequested(pair);
     }
 
     const eventPromise = new Promise<{ blockNumber: bigint; user: string; txHash?: string }>((resolve, reject) => {
@@ -295,7 +366,17 @@ task("task:add_liquidity", "Adds liquidity to the pair.")
       throw new Error("Add liquidity Tx failed.");
     }
 
+    if (liqAdded) {
+      await decryptionRequestedEvent;
+    }
+
     await eventPromise;
+
+    if (!liqAdded) {
+      writeConfig({
+        LIQ_ADDED: true,
+      });
+    }
   });
 
 task("task:swap_tokens", "Adds liquidity to the pair.")
@@ -346,6 +427,7 @@ task("task:swap_tokens", "Adds liquidity to the pair.")
       console.log("Pair is now an operator of the signer on token 1.");
     }
 
+    const decryptionRequestedEvent = waitForDecryptionRequested(pair);
     const eventPromise = new Promise<{
       from: string;
       amount0In: string;
@@ -407,7 +489,7 @@ task("task:swap_tokens", "Adds liquidity to the pair.")
     if (!swapReceipt?.status) {
       throw new Error("Swap Tx failed.");
     }
-
+    await decryptionRequestedEvent;
     const { amount0In, amount1In, amount0Out, amount1Out } = await eventPromise;
 
     const clearAmount0In = await decryptPairEuint64(amount0In, fhevm, pair, signer);
@@ -453,6 +535,7 @@ task("task:remove_liquidity", "Removes liquidity from the pair.")
       console.log("Pair is now an operator of the signer on pair.");
     }
 
+    const decryptionRequestedEvent = waitForDecryptionRequested(pair);
     const eventPromise = new Promise<{ blockNumber: bigint; user: string; txHash?: string }>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Timed out waiting for liquidityBurnt after 3m")), 180_000);
 
@@ -491,5 +574,96 @@ task("task:remove_liquidity", "Removes liquidity from the pair.")
       throw new Error("Add liquidity Tx failed.");
     }
 
+    await decryptionRequestedEvent;
     await eventPromise;
+  });
+
+task("task:refund_addLiq", "Claims refund for an uncompleted liquidity adding")
+  .addParam("requestid", "The associated decryption request id", undefined, types.int)
+  .setAction(async function (_taskArguments: TaskArguments, hre) {
+    const cfg = requireConfig();
+    const pairAddress = cfg.PAIR_ADDRESS;
+    if (!pairAddress) {
+      throw new Error("Pair address not defined in CAMM.json");
+    }
+
+    const { ethers, fhevm } = hre;
+    const signers = await ethers.getSigners();
+    const signer = signers[0];
+    const pair = await ethers.getContractAt("CAMMPair", pairAddress, signer);
+    await fhevm.initializeCLIApi();
+
+    const requestID = _taskArguments.requestid;
+
+    console.log(`Claiming liquidity adding refund for request ${requestID} from the pair (${pairAddress})`);
+
+    const refundEvent = waitForRefund(pair);
+    const refundTx = await pair.requestLiquidityAddingRefund(requestID);
+    const refundReceipt = await refundTx.wait();
+
+    if (!refundReceipt?.status) {
+      throw new Error("Refund Tx failed.");
+    }
+
+    await refundEvent;
+  });
+
+task("task:refund_swap", "Claims refund for an uncompleted swap")
+  .addParam("requestid", "The associated decryption request id", undefined, types.int)
+  .setAction(async function (_taskArguments: TaskArguments, hre) {
+    const cfg = requireConfig();
+    const pairAddress = cfg.PAIR_ADDRESS;
+    if (!pairAddress) {
+      throw new Error("Pair address not defined in CAMM.json");
+    }
+
+    const { ethers, fhevm } = hre;
+    const signers = await ethers.getSigners();
+    const signer = signers[0];
+    const pair = await ethers.getContractAt("CAMMPair", pairAddress, signer);
+    await fhevm.initializeCLIApi();
+
+    const requestID = _taskArguments.requestid;
+
+    console.log(`Claiming swap refund for request ${requestID} from the pair (${pairAddress})`);
+
+    const refundEvent = waitForRefund(pair);
+    const refundTx = await pair.requestSwapRefund(requestID);
+    const refundReceipt = await refundTx.wait();
+
+    if (!refundReceipt?.status) {
+      throw new Error("Refund Tx failed.");
+    }
+
+    await refundEvent;
+  });
+
+task("task:refund_liqRem", "Claims refund for an uncompleted liquidity removal")
+  .addParam("requestid", "The associated decryption request id", undefined, types.int)
+  .setAction(async function (_taskArguments: TaskArguments, hre) {
+    const cfg = requireConfig();
+    const pairAddress = cfg.PAIR_ADDRESS;
+    if (!pairAddress) {
+      throw new Error("Pair address not defined in CAMM.json");
+    }
+
+    const { ethers, fhevm } = hre;
+    const signers = await ethers.getSigners();
+    const signer = signers[0];
+    const pair = await ethers.getContractAt("CAMMPair", pairAddress, signer);
+    await fhevm.initializeCLIApi();
+
+    const requestID = _taskArguments.requestid;
+
+    console.log(`Claiming liquidity removal refund for request ${requestID} from the pair (${pairAddress})`);
+
+    const refundEvent = waitForRefund(pair);
+    const refundTx = await pair.requestLiquidityRemovalRefund(requestID);
+    const refundReceipt = await refundTx.wait();
+
+    if (!refundReceipt?.status) {
+      throw new Error("Refund Tx failed.");
+    }
+
+    await refundEvent;
   });
