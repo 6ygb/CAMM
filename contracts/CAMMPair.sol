@@ -5,9 +5,6 @@ pragma solidity ^0.8.27;
 import "@fhevm/solidity/lib/FHE.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import "@openzeppelin/confidential-contracts/token/ConfidentialFungibleToken.sol";
-import {
-    IConfidentialFungibleToken
-} from "@openzeppelin/confidential-contracts/interfaces/IConfidentialFungibleToken.sol";
 
 /**
  * @title CAMMPair
@@ -93,9 +90,29 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
 
     pendingDecryptionStruct private pendingDecryption;
 
+    struct standardRefundStruct {
+        euint64 amount0;
+        euint64 amount1;
+    }
+    mapping(address from => mapping(uint256 requestID => standardRefundStruct)) public standardRefund;
+
+    struct liquidityRemovalRefundStruct {
+        euint64 lpAmount;
+    }
+    mapping(address from => mapping(uint256 requestID => liquidityRemovalRefundStruct)) public liquidityRemovalRefund;
+
     // Events
     event liquidityMinted(uint256 blockNumber, address user);
     event liquidityBurnt(uint256 blockNumber, address user);
+    event decryptionRequested(address from, uint256 blockNumber, uint256 requestID);
+    event Refund(address from, uint256 blockNumber, uint256 requestID);
+
+    error Expired();
+    error PendingDecryption(uint256 until);
+    error Forbidden();
+    error WrongRequestID();
+    error DecryptionBlocked();
+    error NoRefund();
 
     /**
      * @dev Constructor for the pair contract.
@@ -122,7 +139,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @param deadlineTimestamp The deadline timestamp.
      */
     modifier ensure(uint256 deadlineTimestamp) {
-        require(block.timestamp < deadlineTimestamp, "CAMM: EXPIRED");
+        if (block.timestamp >= deadlineTimestamp) revert Expired();
         _;
     }
 
@@ -133,11 +150,12 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         // Here we make sure there are no pending decryption.
         // In some cases the decryption request is sent but is never fulfilled.
         // In such cases we make sure the last decryption request was more than 5 minutes ago, to not block indefinitly the pair.
-        require(
-            pendingDecryption.isPendingDecryption == false ||
-                block.timestamp >= pendingDecryption.decryptionTimestamp + MAX_DECRYPTION_TIME,
-            "CAMM: Pending Decryption"
-        );
+        if (
+            pendingDecryption.isPendingDecryption &&
+            block.timestamp < pendingDecryption.decryptionTimestamp + MAX_DECRYPTION_TIME
+        ) {
+            revert PendingDecryption(pendingDecryption.decryptionTimestamp + MAX_DECRYPTION_TIME);
+        }
         _;
     }
 
@@ -148,7 +166,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @param _token1 Address of the second token in the pair.
      */
     function initialize(address _token0, address _token1) external {
-        require(msg.sender == factory, "CAMM: FORBIDDEN");
+        if (msg.sender != factory) revert Forbidden();
         token0 = IConfidentialFungibleToken(_token0);
         token1 = IConfidentialFungibleToken(_token1);
     }
@@ -444,6 +462,16 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
             pendingDecryption.currentRequestID = requestID;
             pendingDecryption.decryptionTimestamp = block.timestamp;
             pendingDecryption.isPendingDecryption = true;
+
+            standardRefund[from][requestID].amount0 = sentAmount0;
+            standardRefund[from][requestID].amount1 = sentAmount1;
+
+            FHE.allowThis(standardRefund[from][requestID].amount0);
+            FHE.allowThis(standardRefund[from][requestID].amount1);
+            FHE.allow(standardRefund[from][requestID].amount0, from);
+            FHE.allow(standardRefund[from][requestID].amount1, from);
+
+            emit decryptionRequested(from, block.number, requestID);
         }
     }
 
@@ -455,7 +483,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint128 _obfuscatedReserve1,
         bytes[] memory signatures
     ) external {
-        require(pendingDecryption.currentRequestID == requestID, "CAMM: Wrong requestID");
+        if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
         FHE.checkSignatures(requestID, signatures);
 
         uint128 priceToken0 = _obfuscatedReserve0 / (_obfuscatedReserve1 / scalingFactor);
@@ -491,9 +519,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         _mintLP(mintAmount, user);
         _updateReserves(FHE.add(reserve0, amount0), FHE.add(reserve1, amount1));
 
-        pendingDecryption.currentRequestID = 0;
-        pendingDecryption.decryptionTimestamp = 0;
-        pendingDecryption.isPendingDecryption = false;
+        delete pendingDecryption;
+        delete standardRefund[user][requestID];
     }
 
     /**
@@ -547,6 +574,13 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         pendingDecryption.currentRequestID = requestID;
         pendingDecryption.decryptionTimestamp = block.timestamp;
         pendingDecryption.isPendingDecryption = true;
+
+        liquidityRemovalRefund[from][requestID].lpAmount = sentLP;
+
+        FHE.allowThis(liquidityRemovalRefund[from][requestID].lpAmount);
+        FHE.allow(liquidityRemovalRefund[from][requestID].lpAmount, from);
+
+        emit decryptionRequested(from, block.number, requestID);
     }
 
     function removeLiquidityCallback(
@@ -555,7 +589,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint128 divLowerPart1,
         bytes[] memory signatures
     ) external {
-        require(pendingDecryption.currentRequestID == requestID, "CAMM: Wrong requestID");
+        if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
         FHE.checkSignatures(requestID, signatures);
 
         euint64 burnAmount = removeLiqDecBundle[requestID]._lpSent;
@@ -571,9 +605,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         _burn(address(this), burnAmount);
         emit liquidityBurnt(block.number, from);
 
-        pendingDecryption.currentRequestID = 0;
-        pendingDecryption.decryptionTimestamp = 0;
-        pendingDecryption.isPendingDecryption = false;
+        delete pendingDecryption;
+        delete liquidityRemovalRefund[from][requestID];
     }
 
     /**
@@ -722,6 +755,16 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         pendingDecryption.currentRequestID = requestID;
         pendingDecryption.decryptionTimestamp = block.timestamp;
         pendingDecryption.isPendingDecryption = true;
+
+        standardRefund[from][requestID].amount0 = sent0;
+        standardRefund[from][requestID].amount1 = sent1;
+
+        FHE.allowThis(standardRefund[from][requestID].amount0);
+        FHE.allowThis(standardRefund[from][requestID].amount1);
+        FHE.allow(standardRefund[from][requestID].amount0, from);
+        FHE.allow(standardRefund[from][requestID].amount1, from);
+
+        emit decryptionRequested(from, block.number, requestID);
     }
 
     function swapTokensCallback(
@@ -730,7 +773,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint128 _divLowerPart1,
         bytes[] memory signatures
     ) external {
-        require(pendingDecryption.currentRequestID == requestID, "CAMM: Wrong requestID");
+        if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
         FHE.checkSignatures(requestID, signatures);
 
         euint128 _divUpperPart0 = swapDecBundle[requestID].divUpperPart0;
@@ -768,8 +811,62 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
             to
         );
 
-        pendingDecryption.currentRequestID = 0;
-        pendingDecryption.decryptionTimestamp = 0;
-        pendingDecryption.isPendingDecryption = false;
+        delete pendingDecryption;
+        delete standardRefund[from][requestID];
+    }
+
+    function requestLiquidityAddingRefund(uint256 requestID) public {
+        if (
+            !FHE.isInitialized(standardRefund[msg.sender][requestID].amount0) ||
+            !FHE.isInitialized(standardRefund[msg.sender][requestID].amount1)
+        ) revert NoRefund();
+
+        euint64 refundAmount0 = standardRefund[msg.sender][requestID].amount0;
+        euint64 refundAmount1 = standardRefund[msg.sender][requestID].amount1;
+
+        // No need to update reserves as they are not updated when liquidity is sent
+        _transferTokensFromPool(msg.sender, refundAmount0, refundAmount1, false);
+
+        // If refund is sent prior to decryption we need to block the decryption
+        if (requestID == pendingDecryption.currentRequestID) {
+            delete pendingDecryption;
+        }
+
+        delete standardRefund[msg.sender][requestID];
+        emit Refund(msg.sender, block.number, requestID);
+    }
+
+    function requestSwapRefund(uint256 requestID) public {
+        if (
+            !FHE.isInitialized(standardRefund[msg.sender][requestID].amount0) ||
+            !FHE.isInitialized(standardRefund[msg.sender][requestID].amount1)
+        ) revert NoRefund();
+
+        euint64 refundAmount0 = standardRefund[msg.sender][requestID].amount0;
+        euint64 refundAmount1 = standardRefund[msg.sender][requestID].amount1;
+
+        _transferTokensFromPool(msg.sender, refundAmount0, refundAmount1, true);
+
+        // If refund is sent prior to decryption we need to block the decryption
+        if (requestID == pendingDecryption.currentRequestID) {
+            delete pendingDecryption;
+        }
+
+        delete standardRefund[msg.sender][requestID];
+        emit Refund(msg.sender, block.number, requestID);
+    }
+
+    function requestLiquidityRemovalRefund(uint256 requestID) public {
+        if (!FHE.isInitialized(liquidityRemovalRefund[msg.sender][requestID].lpAmount)) revert NoRefund();
+
+        _transfer(address(this), msg.sender, liquidityRemovalRefund[msg.sender][requestID].lpAmount);
+
+        // If refund is sent prior to decryption we need to block the decryption
+        if (requestID == pendingDecryption.currentRequestID) {
+            delete pendingDecryption;
+        }
+
+        delete liquidityRemovalRefund[msg.sender][requestID];
+        emit Refund(msg.sender, block.number, requestID);
     }
 }
