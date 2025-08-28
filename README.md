@@ -9,7 +9,7 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 
 - **CAMMFactory**: creates confidential token pairs deterministically.
 - **CAMMPair**: the core AMM logic (add/remove liquidity, swaps, refunds), all with encrypted math.
-- **ConfidentialToken** (example): OpenZeppelin ConfidentialFungibleToken with an initial encrypted mint for testing.
+- **testToken** (example): OpenZeppelin ConfidentialFungibleToken with an initial encrypted mint for testing.
 - **Hardhat tasks** to deploy, add liquidity, swap, remove, and trigger refunds.
 - **Tests** that cover “common paths” and refund flows.
 
@@ -31,6 +31,19 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 - **Fees**: a **1% fee** is applied to every swap in order to pay liquidity providers.
 
 - **LP token**: LP supply is an encrypted `euint64`. A **minimum liquidity** of `100 * 10^6` (since decimals = 6) is enforced on the first mint.
+
+
+---
+
+
+## On-chain decryption without breaking confidentiality
+
+AMMs highly rely on division for computing swap output amounts and all liquidity operations. As for now (**FHEVM 0.7**), division between two encrypted numbers is not supported. However division between a ciphertext and a clear number is possible. This imply that all the denominators must be decrypted. </br> </br>
+Reserves are encrypted for confidentiality, decrypting them at each swap would leak the actual amounts being swaped. That's why, to operate, CAMM must find a way to decrypt reserves or other confidential amounts without leaking their real value. </br> </br>
+To achieve this, CAMM rely on a very simple mathematical concept : **division invariance**.
+This concept states that if you multiply your base numerator and denominator by the same number, the result (ratio) **will stay the same**. </br> </br>
+As written before, only our denominator needs to be decrypted. So if we multiply our numerator and denominator by an **encrypted random number**, only the **denomintaor times a random number** is decrypted, without leaking information on our base denominator value. </br> </br>
+Let's see with a simple example involving a simple swap :
 
 
 
