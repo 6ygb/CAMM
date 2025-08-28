@@ -207,7 +207,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     function _updateObfuscatedReserves() internal {
         euint16 percentage = _RNG_Bounded(256, 70);
 
-        //Never overflows because max rng bounded is 562 and max euint16 is 65535
+        //Never overflows because max rng bounded is 326 and max euint16 is 65535
         euint16 scaledPercentage = FHE.mul(percentage, 100);
         euint32 upperBound = FHE.add(FHE.asEuint32(scaledPercentage), uint32(scalingFactor));
         euint32 lowerBound = FHE.sub(uint32(scalingFactor), FHE.asEuint32(scaledPercentage));
