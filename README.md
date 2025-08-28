@@ -154,7 +154,17 @@ function swapTokensCallback(
 
 ```
 
+---
 
+## Obfuscated reserves
+
+---
+
+## Refund policy
+
+---
+
+## Adding Liquidity
 
 ---
 
