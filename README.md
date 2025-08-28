@@ -158,6 +158,67 @@ function swapTokensCallback(
 
 ## Obfuscated reserves
 
+In CAMM, reserves are encrypted. Broadcasting the exact price of a token to the other (by decrypting the price) could potentialy leak :
+- The proportion of a reserve to another (which is not that sensitive)
+- The price impact of a swap, potentialy giving an approximative idea of its size
+
+To avoid information leak and to preserve confidentiality, CAMM broadcasts **obfuscated reserves**. It does it by having a public struct containing those **obfuscated reserves** and giving decryption right to whoever asks for it.
+
+```solidity
+struct obfuscatedReservesStruct {
+        euint128 obfuscatedReserve0;
+        euint128 obfuscatedReserve1;
+}
+
+obfuscatedReservesStruct public obfuscatedReserves;
+[...]
+function requestReserveInfo() public {
+        FHE.allow(obfuscatedReserves.obfuscatedReserve0, msg.sender);
+        FHE.allow(obfuscatedReserves.obfuscatedReserve1, msg.sender);
+        emit discloseReservesInfo(
+            block.number,
+            msg.sender,
+            obfuscatedReserves.obfuscatedReserve0,
+            obfuscatedReserves.obfuscatedReserve1
+        );
+    }
+```
+As this process of having to request decryption right everytime to get the approximative price can be repetitive and expensive, an address named **price scanner** can be provided when creating the pair.
+This **price scanner** address is granted permanent decryption right on **obfuscated reserve** and can be used by the front-end of a dApp to decrypt and display price without having to call `requestReserveInfo()`. </br>
+### What are obfuscated reserves
+As their name suggest, these "reserves" are mathematicaly modified to avoid leaking the exact value of the pair reserves. As seen in the previous section, multiplying both numerator and denominator of a division by the same number does not alter the result. </br></br>
+As computing the price of a token to another is just divising a reserve by another (`reserve0/reserve1` = price of token0 in token1), we can multiply reserves by a random number everytime they change to hide their real value. </br></br>
+But this would not be sufficient, in fact, the price would still be exact and could leak the price impact of the last swap if observed before and after it. That's why they're also multiplied by a random number modifying their value by max ±3.26% each (the % is between 0.7% and 3.26%). The final decrypted price is innacurate by max ~ ±7%. This innacuracy changes everytime reserves are updated and its role is to hide swap price impact. </br></br>
+In order to compute **obfuscated reserves**, CAMM uses the following formula : </br>
+$\text{obfuscatedReserve }= \text{reserve }\times \text{ randomPercentageMultiplier }\times \text{ randomEuint16}$ </br>
+$\text{randomPercentageMultiplier } =  1 ± [0.007 - 0.0326]$ </br></br>
+
+This whole process is done in the `_updateObfuscatedReserves()` :
+```solidity
+function _updateObfuscatedReserves() internal {
+        euint16 percentage = _RNG_Bounded(256, 70);
+
+        euint16 scaledPercentage = FHE.mul(percentage, 100);
+        euint32 upperBound = FHE.add(FHE.asEuint32(scaledPercentage), uint32(scalingFactor));
+        euint32 lowerBound = FHE.sub(uint32(scalingFactor), FHE.asEuint32(scaledPercentage));
+
+        ebool randomBool0 = FHE.randEbool();
+        ebool randomBool1 = FHE.randEbool();
+
+        euint32 reserve0Multiplier = FHE.select(randomBool0, upperBound, lowerBound);
+        euint32 reserve1Multiplier = FHE.select(randomBool1, lowerBound, upperBound);
+
+        euint16 rngMultiplier = _RNG();
+
+        euint64 reserve0Factor = FHE.mul(FHE.asEuint64(reserve0Multiplier), rngMultiplier);
+        euint64 reserve1Factor = FHE.mul(FHE.asEuint64(reserve1Multiplier), rngMultiplier);
+
+        euint128 _obfuscatedReserve0 = FHE.mul(FHE.asEuint128(reserve0), reserve0Factor);
+        euint128 _obfuscatedReserve1 = FHE.mul(FHE.asEuint128(reserve1), reserve1Factor);
+        [...]
+    }
+```
+
 ---
 
 ## Refund policy
