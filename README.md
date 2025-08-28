@@ -1,9 +1,44 @@
-# FHEVM Time-Based One-Time Password (TOTP)
+# CAMM - Confidential Automated Market Maker (FHEVM)
 
-**Confidential on-chain 4-digit codes** using **Zama’s Fully Homomorphic Encryption (FHEVM)**.  
-Each user holds an encrypted secret stored on-chain; codes are derived from the timestamp + a per-address salt and can be checked **without revealing** the code in clear.
+**A UniswapV2-style AMM where amounts, balances, and reserves are encrypted end-to-end** using **Zama’s Fully Homomorphic Encryption (FHEVM)**.  
+Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphertexts; only authorized parties can decrypt specific outputs.
 
-> ⚠️ **Proof-of-concept only** — not production-ready.
+> ⚠️ **Proof-of-concept only** - not production-ready.
+
+## What’s inside
+
+- **CAMMFactory**: creates confidential token pairs deterministically.
+- **CAMMPair**: the core AMM logic (add/remove liquidity, swaps, refunds), all with encrypted math.
+- **ConfidentialToken** (example): OpenZeppelin ConfidentialFungibleToken with an initial encrypted mint for testing.
+- **Hardhat tasks** to deploy, add liquidity, swap, remove, and trigger refunds.
+- **Tests** that cover “common paths” and refund flows.
+
+---
+
+## High-level design
+
+- **Encrypted types**: the pair operates on mainly `euint64` (FHE types) for amounts (obfuscated reserves are relying on `euint128`).  
+  Reserves, LP amounts, amounts in/out, and computed prices stay encrypted on-chain.
+
+- **Two-step operations**: add-liquidity (post-bootstrap), remove-liquidity, and swap prepare **encrypted** expressions and request **decryption** via the FHEVM gateway, then settle in a callback. While a request is “live”, the pool is temporarily locked. The decrypted amounts will never break the AMM confidentiality, see later sections for further explainations.
+
+- **Timeout guard**: if a decryption is never fulfilled, the pool auto-unlocks after `MAX_DECRYPTION_TIME` (**5 minutes**) to avoid permanent locking in case of gateway outage.
+
+- **Refund Policy**: If the a decryption request is not fulfilled (meaning that an operation like adding/removing liquidity or swapping cannot be entirely completed) in time (or in case of outage on Zama's end), the user can request a refund of the sent funds.
+
+- **Price privacy**: reserves are **obfuscated**, both multiplied by the same number and both are reduced or increased by 5%. An optional external **price scanner address** is whitelisted to read those obfuscated values facilitating decryption from a front end. Any user can request decryption right to the obfuscated reserves.
+
+- **Fees**: a **1% fee** is applied to every swap in order to pay liquidity providers.
+
+- **LP token**: LP supply is an encrypted `euint64`. A **minimum liquidity** of `100 * 10^6` (since decimals = 6) is enforced on the first mint.
+
+
+
+
+
+
+
+
 
 ---
 
