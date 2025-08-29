@@ -10,7 +10,6 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
   Built using Zama's <a href="https://github.com/zama-ai/fhevm">fhEVM</a>, Inspired by <a href="https://github.com/Uniswap/v2-core">UniswapV2</a> 
 </p>
 
-
 ## What’s inside
 
 - **CAMMFactory**: creates confidential token pairs deterministically.
@@ -18,6 +17,24 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 - **testToken** (example): OpenZeppelin ConfidentialFungibleToken with an initial encrypted mint for testing.
 - **Hardhat tasks** to deploy, add liquidity, swap, remove, and trigger refunds.
 - **Tests** that cover “common paths” and refund flows.
+
+---
+
+## Table of Contents
+
+- [Table of Contents](#table-of-contents)
+- [High-level design](#high-level-design)
+- [On-chain decryption without breaking confidentiality](#on-chain-decryption-without-breaking-confidentiality)
+- [Obfuscated reserves](#obfuscated-reserves)
+- [Refund policy](#refund-policy)
+- [Adding Liquidity](#adding-liquidity)
+- [Contract APIs & Events](#contract-apis--events)
+- [Hardhat Tasks](#hardhat-tasks)
+- [Config file (`CAMM.json`)](#config-file-cammjson)
+- [Testing](#testing)
+- [Limitations](#limitations)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
 ---
 
@@ -348,8 +365,189 @@ function addLiquidityCallback(
 ```
 ---
 
+## Contract APIs & Events
 
-## 📜 License
+This section summarizes the most used entry points of `CAMMPair`.
+
+### Constructor & Init
+
+```solidity
+constructor(address _cammPriceScanner) ConfidentialFungibleToken("Liquidity Token", "PAIR", "")
+function initialize(address _token0, address _token1) external
+```
+
+- `cammPriceScanner` is permanently allowed to decrypt **obfuscated reserves** for UI price display.
+- `initialize` must be called by the factory to set `token0` and `token1` (confidential tokens).
+
+### Liquidity
+
+```solidity
+// Contract‑called variant (amounts already encrypted & allowed)
+function addLiquidity(euint64 amount0, euint64 amount1, uint256 deadline) external
+
+// dApp‑called variant (external encryption + proof)
+function addLiquidity(externalEuint64 encryptedAmount0, externalEuint64 encryptedAmount1, uint256 deadline, bytes calldata inputProof) external
+
+// Removal
+function removeLiquidity(euint64 lpAmount, address to, uint256 deadline) external
+function removeLiquidity(externalEuint64 encryptedLPAmount, address to, uint256 deadline, bytes calldata inputProof) external
+```
+
+**Callbacks** (called by the gateway when denominators are decrypted):
+```solidity
+function addLiquidityCallback(
+  uint256 requestID,
+  uint128 divLowerPart0,
+  uint128 divLowerPart1,
+  uint128 _obfuscatedReserve0,
+  uint128 _obfuscatedReserve1,
+  bytes[] memory signatures
+) external
+
+function removeLiquidityCallback(
+  uint256 requestID,
+  uint128 divLowerPart0,
+  uint128 divLowerPart1,
+  bytes[] memory signatures
+) external
+```
+
+### Swaps
+
+```solidity
+function swapTokens(euint64 amount0In, euint64 amount1In, address to, uint256 deadline) external
+function swapTokens(externalEuint64 encryptedAmount0In, externalEuint64 encryptedAmount1In, address to, uint256 deadline, bytes calldata inputProof) external
+
+function swapTokensCallback(
+  uint256 requestID,
+  uint128 _divLowerPart0,
+  uint128 _divLowerPart1,
+  bytes[] memory signatures
+) external
+```
+
+### Refunds
+
+```solidity
+function requestLiquidityAddingRefund(uint256 requestID) public
+function requestSwapRefund(uint256 requestID) public
+function requestLiquidityRemovalRefund(uint256 requestID) public
+```
+
+### Reserves (obfuscated)
+
+```solidity
+function requestReserveInfo() public
+// emits discloseReservesInfo(blockNumber, user, euint128 obfuscatedReserve0, euint128 obfuscatedReserve1)
+```
+
+### Events
+
+- `event decryptionRequested(address from, uint256 blockNumber, uint256 requestID);`
+- `event liquidityMinted(uint256 blockNumber, address user);`
+- `event liquidityBurnt(uint256 blockNumber, address user);`
+- `event Swap(address from, euint64 amount0In, euint64 amount1In, euint64 amount0Out, euint64 amount1Out, address to);`
+- `event Refund(address from, uint256 blockNumber, uint256 requestID);`
+- `event discloseReservesInfo(uint256 blockNumber, address user, euint128 obfuscatedReserve0, euint128 obfuscatedReserve1);`
+
+### Errors
+
+- `error Expired();` — deadline passed.  
+- `error PendingDecryption(uint256 until);` — operation blocked until timeout.  
+- `error Forbidden();` — caller not authorized (e.g., non‑factory initialize).  
+- `error WrongRequestID();` — unexpected callback request ID.  
+- `error DecryptionBlocked();` — (if used) a decryption was invalidated.  
+- `error NoRefund();` — no staged refund for `(msg.sender, requestID)`.
+
+---
+
+## Hardhat Tasks
+
+> The repo ships several tasks to **deploy** and exercise the pair.
+
+### Deploy
+
+```bash
+npx hardhat task:deploy_camm --network sepolia
+```
+
+Writes addresses to `CAMM.json` for reuse by other tasks.
+
+### Add Liquidity
+
+```bash
+# Direct (amounts are encrypted on-chain)
+npx hardhat task:add_liquidity --amount0 12000 --amount1 10000 --network sepolia
+
+```
+
+### Swap
+
+```bash
+npx hardhat task:swap_tokens --amount0 500 --network sepolia
+# or
+npx hardhat task:swap_tokens --amount1 200 --network sepolia
+```
+
+### Remove Liquidity
+
+```bash
+npx hardhat task:remove_liquidity --amount 20000 --network sepolia
+```
+
+### Refunds
+
+```bash
+# After seeing `decryptionRequested(..., requestID)` but no callback
+npx hardhat task:refund_add --request <id> --network sepolia
+npx hardhat task:refund_swap --request <id> --network sepolia
+npx hardhat task:refund_remove --request <id> --network sepolia
+```
+
+### Balances
+```bash
+npx hardhat task:get_balances --network sepolia
+npx hardhat task:get_LPBalance --network sepolia
+```
+
+---
+
+## Config file (`CAMM.json`)
+
+The tasks persist runtime data under `CAMM.json` at the repo root.
+
+```jsonc
+{
+  "PAIR_ADDRESS": "0x...",
+  "TOKEN0_ADDRESS": "0x...",
+  "TOKEN1_ADDRESS": "0x...",
+  "LIQ_ADDED": true
+}
+```
+
+---
+
+## Testing
+
+- Unit tests cover:
+  - Deployment / initialization
+  - First mint & minimum liquidity
+  - Add liquidity (target amounts + refunds)
+  - Remove liquidity (burn, payouts)
+  - Swaps (in/out, 1% fee)
+  - **Refund flows** for each operation (including event polling and timeouts)
+
+---
+
+## Limitations
+
+- Division of ciphertext by ciphertext is not supported; the design depends on gateway callbacks.
+- Obfuscated prices are **approximate** (~±7%) and change frequently.
+- Gas/HCU costs for encrypted operations are **significant**.
+
+---
+
+## License
 
 - Original contributions in this repo (including all `CAMM` smart contracts, tests, and tasks) are under the **BSD 3-Clause Clear License**.
 - Template/dependencies (e.g., FHEVM tooling) follow their respective licenses (e.g., **MIT**). Check each package for details.
