@@ -290,6 +290,58 @@ function requestSwapRefund(uint256 requestID) public {
 
 ## Adding Liquidity
 
+On UniswapV2 adding liquidity require the amounts to comply with the **constant product formula** : "This formula, most simply expressed as x * y = k, states that trades must not change the product (k) of a pair’s reserve balances (x and y)". </br> </br>
+In practice, this means liquidity providers must deposit tokens in the same proportion as the current reserves, so that while the pool size (and thus k) increases, the price ratio x/y remains unchanged. </br></br>
+As CAMM reserves values are encrypted and not directly available (only through **Obfuscated Reserves**) it's hard for a user to compute the good token proportion to add as liquidity. CAMM automaticaly computes the right token amounts to add and refunds the rest to the user, directly in the liquidity adding process. </br> </br>
+Those right amounts are computed using prices derived from **Obfuscated Reserves** :
+```solidity
+function addLiquidityCallback(
+        uint256 requestID,
+        uint128 divLowerPart0,
+        uint128 divLowerPart1,
+        uint128 _obfuscatedReserve0,
+        uint128 _obfuscatedReserve1,
+        bytes[] memory signatures
+) external {
+    if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
+    FHE.checkSignatures(requestID, signatures);
+
+    uint128 priceToken0 = _obfuscatedReserve0 / (_obfuscatedReserve1 / scalingFactor);
+    uint128 priceToken1 = _obfuscatedReserve1 / (_obfuscatedReserve0 / scalingFactor);
+
+    euint64 sentAmount0 = addLiqDecBundle[requestID]._sentAmount0;
+    euint64 sentAmount1 = addLiqDecBundle[requestID]._sentAmount1;
+    [...]
+    euint64 targetAmount0 = FHE.mul(FHE.div(sentAmount1, uint64(priceToken0)), scalingFactor); // right amount for token0
+    euint64 targetAmount1 = FHE.mul(FHE.div(sentAmount0, uint64(priceToken1)), scalingFactor); // right amount for token1
+
+    ebool isGoodTarget0 = FHE.ge(targetAmount0, sentAmount0); // ensure right amount0 is not larger than the amount0 sent
+    ebool isGoodTarget1 = FHE.ge(targetAmount1, sentAmount1); // ensure right amount1 is not larger than the amount1 sent
+
+    euint64 amount0 = FHE.select(isGoodTarget0, sentAmount0, targetAmount0); // selecting the lowest value
+    euint64 amount1 = FHE.select(isGoodTarget1, sentAmount1, targetAmount1); // selecting the lowest value
+
+    euint128 divUpperPart0 = FHE.mul(FHE.asEuint128(amount0), partialUpperPart0);
+    euint128 divUpperPart1 = FHE.mul(FHE.asEuint128(amount1), partialUpperPart1); 
+
+    euint64 computedLPAmount0 = FHE.asEuint64(FHE.div(divUpperPart0, divLowerPart0)); 
+    euint64 computedLPAmount1 = FHE.asEuint64(FHE.div(divUpperPart1, divLowerPart1));
+
+    euint64 mintAmount = FHE.min(computedLPAmount0, computedLPAmount1);
+
+    euint64 refundAmount0 = FHE.sub(sentAmount0, amount0); // computing refund amount for token0
+    euint64 refundAmount1 = FHE.sub(sentAmount1, amount1); // computing refund amount for token1
+
+    _transferTokensFromPool(user, refundAmount0, refundAmount1, false); // refunding unspent amounts
+    _mintLP(mintAmount, user);
+    _updateReserves(FHE.add(reserve0, amount0), FHE.add(reserve1, amount1));
+
+    delete pendingDecryption;
+    delete standardRefund[user][requestID];
+}
+```
+
+
 ---
 
 ## Testnet address
