@@ -351,7 +351,7 @@ function addLiquidityCallback(
 
 ## 📜 License
 
-- Original contributions in this repo (including `TOTP` smart contract, tests, and tasks) are under the **BSD 3-Clause Clear License**.
+- Original contributions in this repo (including all `CAMM` smart contracts, tests, and tasks) are under the **BSD 3-Clause Clear License**.
 - Template/dependencies (e.g., FHEVM tooling) follow their respective licenses (e.g., **MIT**). Check each package for details.
 
 ---
