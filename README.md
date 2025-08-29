@@ -222,6 +222,69 @@ function _updateObfuscatedReserves() internal {
 ---
 
 ## Refund policy
+CAMM heavily relies on Zama's on-chain decryption process. This process is asynchronous and complex. It happens sometimes that the decryption request is sent but never answered. In this case the user action on the pair is frozen in the middle of its completion. In these cases, the users tokens are already sent to the pair but they never get what they was due. </br> </br>
+To mitigate this issue, every (encrypted) amount sent by users are stored inside **refund strcut**. If ever needed any user can get a refund if the decryption request associated to their action has not been carried out. </br></br>
+The following function create refund bundles :
+- `addLiquidity()`
+- `removeLiquidity()`
+- `swapTokens()`
+
+```solidity
+struct standardRefundStruct {
+        euint64 amount0;
+        euint64 amount1;
+}
+struct liquidityRemovalRefundStruct {
+    euint64 lpAmount;
+}
+mapping(address from => mapping(uint256 requestID => standardRefundStruct)) public standardRefund;
+mapping(address from => mapping(uint256 requestID => liquidityRemovalRefundStruct)) public liquidityRemovalRefund;
+[...]
+//Refund bundle creation example
+function _addLiquidity(
+        euint64 amount0,
+        euint64 amount1,
+        address from,
+        uint256 deadline
+) internal ensure(deadline) decryptionAvailable {
+    [...]
+    //sending the tokens without adding them to pool
+    (euint64 sentAmount0, euint64 sentAmount1) = _transferTokensToPool(from, amount0, amount1, false);
+    [...]
+    standardRefund[from][requestID].amount0 = sentAmount0;
+    standardRefund[from][requestID].amount1 = sentAmount1;
+    [...]
+}
+```
+
+3 public functions are available for any user to get their refund :
+- `requestLiquidityAddingRefund()`
+- `requestSwapRefund()`
+- `requestLiquidityRemovalRefund()`
+
+These function work as the following
+```solidity
+function requestSwapRefund(uint256 requestID) public {
+    if (
+        !FHE.isInitialized(standardRefund[msg.sender][requestID].amount0) ||
+        !FHE.isInitialized(standardRefund[msg.sender][requestID].amount1)
+    ) revert NoRefund();
+
+    euint64 refundAmount0 = standardRefund[msg.sender][requestID].amount0;
+    euint64 refundAmount1 = standardRefund[msg.sender][requestID].amount1;
+
+    _transferTokensFromPool(msg.sender, refundAmount0, refundAmount1, true);
+
+    // If refund is sent prior to decryption we need to block the decryption
+    if (requestID == pendingDecryption.currentRequestID) {
+        delete pendingDecryption;
+    }
+
+    delete standardRefund[msg.sender][requestID];
+    emit Refund(msg.sender, block.number, requestID);
+}
+
+```
 
 ---
 
