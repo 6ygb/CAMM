@@ -667,3 +667,35 @@ task("task:refund_liqRem", "Claims refund for an uncompleted liquidity removal")
 
     await refundEvent;
   });
+
+  task("task:claim_airdrop", "Claims a 1000 token airdrop on token0 & token1.")
+  .setAction(async function (_taskArguments: TaskArguments, hre) {
+    const cfg = requireConfig();
+    const token0Address = cfg.TOKEN0_ADDRESS;
+    const token1Address = cfg.TOKEN1_ADDRESS;
+    if (!token0Address || !token1Address) {
+      throw new Error("Token addresses not defined in CAMM.json");
+    }
+
+    const { ethers, fhevm } = hre;
+    const signers = await ethers.getSigners();
+    const signer = signers[0];
+    const token0 = await ethers.getContractAt("ConfidentialToken", token0Address, signer);
+    const token1 = await ethers.getContractAt("ConfidentialToken", token1Address, signer);
+    await fhevm.initializeCLIApi();
+
+    const claimTx0 = await token0.airDrop();
+    const claimReceipt0 = await claimTx0.wait();
+    if (!claimReceipt0?.status) {
+      throw new Error("Airdrop Tx on token 0 failed.");
+    }
+    console.log("Claimed airdrop on token 0.");
+
+    const claimTx1 = await token1.airDrop();
+    const claimReceipt1 = await claimTx1.wait();
+    if (!claimReceipt1?.status) {
+      throw new Error("Airdrop Tx on token 1failed.");
+    }
+    console.log("Claimed airdrop on token 1.");
+
+  });
