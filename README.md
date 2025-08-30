@@ -506,6 +506,7 @@ npx hardhat task:refund_remove --request <id> --network sepolia
 
 ### Balances
 ```bash
+npx hardhat task:claim_airdrop --network sepolia
 npx hardhat task:get_balances --network sepolia
 npx hardhat task:get_LPBalance --network sepolia
 ```
