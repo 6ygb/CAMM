@@ -97,8 +97,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     // Addresses of the factory and associated tokens
     address public factory;
     address public cammPriceScanner;
-    IConfidentialFungibleToken public token0;
-    IConfidentialFungibleToken public token1;
+    address public token0Address;
+    address public token1Address;
+    IConfidentialFungibleToken private token0;
+    IConfidentialFungibleToken private token1;
 
     // Reserve values for token0 and token1
     euint64 private reserve0;
@@ -162,6 +164,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         if (msg.sender != factory) revert Forbidden();
         token0 = IConfidentialFungibleToken(_token0);
         token1 = IConfidentialFungibleToken(_token1);
+        token0Address = _token0;
+        token1Address = _token1;
     }
 
     /**
