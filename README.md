@@ -42,6 +42,8 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 
 - **Encrypted types**: the pair operates on mainly `euint64` (FHE types) for amounts (obfuscated reserves are relying on `euint128`).  
   Reserves, LP amounts, amounts in/out, and computed prices stay encrypted on-chain.
+  
+- **ERC-7984 implementation**: CAMM implements Open Zeppelin's Confidential Token standard **ERC-7984** for both the pair tokens and the pair itself, providing ERC-compatible interfaces while preserving confidentiality.
 
 - **Two-step operations**: add-liquidity (post-bootstrap), remove-liquidity, and swap prepare **encrypted** expressions and request **decryption** via the FHEVM gateway, then settle in a callback. While a request is “live”, the pool is temporarily locked. The decrypted amounts will never break the AMM confidentiality, see later sections for further explainations.
 
@@ -49,7 +51,7 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 
 - **Refund Policy**: If the a decryption request is not fulfilled (meaning that an operation like adding/removing liquidity or swapping cannot be entirely completed) in time (or in case of outage on Zama's end), the user can request a refund of the sent funds.
 
-- **Price privacy**: reserves are **obfuscated**, both multiplied by the same number and both are reduced or increased by 5%. An optional external **price scanner address** is whitelisted to read those obfuscated values facilitating decryption from a front end. Any user can request decryption right to the obfuscated reserves.
+- **Price privacy**: reserves are **obfuscated**, both multiplied by the same number and both are reduced or increased by a % in the range [0.7 - 3.26]. An optional external **price scanner address** is whitelisted to read those obfuscated values facilitating decryption from a front end. Any user can request decryption right to the obfuscated reserves.
 
 - **Fees**: a **1% fee** is applied to every swap in order to pay liquidity providers.
 
@@ -468,7 +470,7 @@ function requestReserveInfo() public
 ### Deploy
 
 ```bash
-npx hardhat task:deploy_camm --network sepolia
+npx hardhat task:deploy_camm --network sepolia --scanner 0x...
 ```
 
 Writes addresses to `CAMM.json` for reuse by other tasks.
@@ -519,9 +521,11 @@ The tasks persist runtime data under `CAMM.json` at the repo root.
 
 ```jsonc
 {
+  "FACTORY_ADDRESS": "0x...",
   "PAIR_ADDRESS": "0x...",
   "TOKEN0_ADDRESS": "0x...",
   "TOKEN1_ADDRESS": "0x...",
+  "SCANNER_ADDRESS": "0x...",
   "LIQ_ADDED": true
 }
 ```
