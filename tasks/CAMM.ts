@@ -12,6 +12,7 @@ type CAMMConfig = {
   FACTORY_ADDRESS?: string;
   TOKEN0_ADDRESS?: string;
   TOKEN1_ADDRESS?: string;
+  SCANNER_ADDRESS?: string;
   LIQ_ADDED?: boolean;
 };
 
@@ -172,44 +173,65 @@ async function waitForRefund(
   });
 }
 
-task("task:deploy_camm", "Deploys the CAMM contracts").setAction(async function (_taskArguments: TaskArguments, hre) {
-  console.log("Deploying CAMM contracts.");
-  const { ethers } = hre;
-  const signers = await ethers.getSigners();
-  const deployer = signers[0];
+task("task:deploy_camm", "Deploys the CAMM contracts")
+  .addOptionalParam(
+    "scanner",
+    "Custom price scanner address (defaults to the deployer address)",
+    undefined,
+    types.string,
+  )
+  .setAction(async function (_taskArguments: TaskArguments, hre) {
+    console.log("Deploying CAMM contracts.");
+    const { ethers } = hre;
+    const signers = await ethers.getSigners();
+    const deployer = signers[0];
 
-  const CAMMFactory = await ethers.getContractFactory("CAMMFactory");
-  const CAMMFactoryContract = await CAMMFactory.connect(deployer).deploy();
-  await CAMMFactoryContract.deploymentTransaction()?.wait();
-  const CAMMFactoryAddress = await CAMMFactoryContract.getAddress();
-  console.log(`Factory deployed at : ${CAMMFactoryAddress}`);
+    let scannerAddress: string;
+    if (_taskArguments.scanner) {
+      try {
+        scannerAddress = ethers.getAddress(String(_taskArguments.scanner));
+      } catch {
+        throw new Error(`Invalid --scanner address: ${_taskArguments.scanner}`);
+      }
+    } else {
+      scannerAddress = deployer.address;
+    }
 
-  const tokenFactory = await ethers.getContractFactory("ConfidentialToken");
-  const token0Contract = await tokenFactory.connect(deployer).deploy("Us Dollar", "USD");
-  await token0Contract.deploymentTransaction()?.wait();
-  const token0Address = await token0Contract.getAddress();
-  console.log(`Token0 deployed at : ${token0Address}`);
+    console.log(`Price scanner set to: ${scannerAddress} .`);
 
-  const token1Contract = await tokenFactory.connect(deployer).deploy("Euro", "EUR");
-  await token1Contract.deploymentTransaction()?.wait();
-  const token1Address = await token1Contract.getAddress();
-  console.log(`Token1 deployed at : ${token1Address}`);
+    const CAMMFactory = await ethers.getContractFactory("CAMMFactory");
+    const CAMMFactoryContract = await CAMMFactory.connect(deployer).deploy();
+    await CAMMFactoryContract.deploymentTransaction()?.wait();
+    const CAMMFactoryAddress = await CAMMFactoryContract.getAddress();
+    console.log(`Factory deployed at : ${CAMMFactoryAddress}`);
 
-  const createPairTx = await CAMMFactoryContract.createPair(token0Address, token1Address, deployer.address);
-  await createPairTx.wait();
-  const pairAddress = await CAMMFactoryContract.getPair(token0Address, token1Address);
-  console.log(`Pair deployed at : ${pairAddress}`);
+    const tokenFactory = await ethers.getContractFactory("ConfidentialToken");
+    const token0Contract = await tokenFactory.connect(deployer).deploy("Us Dollar", "USD");
+    await token0Contract.deploymentTransaction()?.wait();
+    const token0Address = await token0Contract.getAddress();
+    console.log(`Token0 deployed at : ${token0Address}`);
 
-  //No need to mint tokens here, the testToken contract constructor mints 100k to deployer.
+    const token1Contract = await tokenFactory.connect(deployer).deploy("Euro", "EUR");
+    await token1Contract.deploymentTransaction()?.wait();
+    const token1Address = await token1Contract.getAddress();
+    console.log(`Token1 deployed at : ${token1Address}`);
 
-  writeConfig({
-    PAIR_ADDRESS: pairAddress,
-    FACTORY_ADDRESS: CAMMFactoryAddress,
-    TOKEN0_ADDRESS: token0Address,
-    TOKEN1_ADDRESS: token1Address,
-    LIQ_ADDED: false,
+    const createPairTx = await CAMMFactoryContract.createPair(token0Address, token1Address, scannerAddress);
+    await createPairTx.wait();
+    const pairAddress = await CAMMFactoryContract.getPair(token0Address, token1Address);
+    console.log(`Pair deployed at : ${pairAddress}`);
+
+    //No need to mint tokens here, the testToken contract constructor mints 100k to deployer.
+
+    writeConfig({
+      PAIR_ADDRESS: pairAddress,
+      FACTORY_ADDRESS: CAMMFactoryAddress,
+      TOKEN0_ADDRESS: token0Address,
+      TOKEN1_ADDRESS: token1Address,
+      SCANNER_ADDRESS: scannerAddress,
+      LIQ_ADDED: false,
+    });
   });
-});
 
 task("task:get_balances", "Retrieve token balances.").setAction(async function (_taskArguments: TaskArguments, hre) {
   const cfg = requireConfig();
