@@ -1,4 +1,4 @@
-# CAMM - Confidential Automated Market Maker (FHEVM)
+# CAMM - Confidential Automated Market Maker
 
 **A UniswapV2-style AMM where amounts, balances, and reserves are encrypted end-to-end** using **Zama’s Fully Homomorphic Encryption (FHEVM)**.  
 Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphertexts; only authorized parties can decrypt specific outputs.
