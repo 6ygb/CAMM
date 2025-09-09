@@ -206,7 +206,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @dev Recomputes and stores obfuscated reserves using randomized multipliers,
      *      then updates ACL so this contract and the price scanner can read them.
      *      This helps publish reserve-like values without revealing exact reserves.
-     *      Computed price from obfuscated reserve is +- 10% close to the real price.
+     *      Computed price from obfuscated reserve is +- 7% close to the real price.
      */
     function _updateObfuscatedReserves() internal {
         euint16 percentage = _RNG_Bounded(256, 70);
