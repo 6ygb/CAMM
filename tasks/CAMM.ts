@@ -6,6 +6,7 @@ import type { AddressLike } from "ethers";
 import type { TaskArguments } from "hardhat/types";
 import fs from "fs";
 import path from "path";
+import { token } from "../types/@openzeppelin/confidential-contracts";
 
 type CAMMConfig = {
   PAIR_ADDRESS?: string;
@@ -253,6 +254,33 @@ task("task:get_balances", "Retrieve token balances.").setAction(async function (
   console.log(
     `Balance 0 : ${ethers.formatUnits(balance0.toString(), 6)}\nBalance 1 : ${ethers.formatUnits(balance1.toString(), 6)}`,
   );
+});
+
+task("task:get_pairTokens", "Retrives tokens address (in order) directly from the pair.").setAction(async function (
+  _taskArguments: TaskArguments,
+  hre,
+) {
+  const cfg = requireConfig();
+  const pairAddress = cfg.PAIR_ADDRESS;
+  if (!pairAddress) {
+    throw new Error("Pair address not defined in CAMM.json");
+  }
+
+  const { ethers } = hre;
+  const signers = await ethers.getSigners();
+  const signer = signers[0];
+  const pair = await ethers.getContractAt("CAMMPair", pairAddress, signer);
+
+  const token0Addr = await pair.token0Address();
+  const token1Addr = await pair.token1Address();
+
+  const token0Instance = await ethers.getContractAt("ConfidentialToken", token0Addr, signer);
+  const token1Instance = await ethers.getContractAt("ConfidentialToken", token1Addr, signer);
+
+  const token0Symbol = await token0Instance.symbol();
+  const token1Symbol = await token1Instance.symbol();
+
+  console.log(`token0 : ${token0Symbol}, ${token0Addr}\ntoken1 : ${token1Symbol}, ${token1Addr}`);
 });
 
 task("task:get_LPBalance", "Retrives LP balance").setAction(async function (_taskArguments: TaskArguments, hre) {
