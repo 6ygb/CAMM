@@ -10,6 +10,38 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
   Built using Zama's <a href="https://github.com/zama-ai/fhevm">fhEVM</a>, Inspired by <a href="https://github.com/Uniswap/v2-core">UniswapV2</a> 
 </p>
 
+## Test it !
+> ⚠️ **Please read the docs first** ⚠️
+
+<br> 
+Front-end POC with test contracts at : https://camm.6ygb.dev <br> <br>
+Deployed on Sepolia :
+
+- Factory (https://sepolia.etherscan.io/address/0x1c8FC73B670E585BaBEBF1649faAf6b0742878Ec#code) :
+  
+  ```
+  0x1c8FC73B670E585BaBEBF1649faAf6b0742878Ec
+  ``` 
+
+- Pair (https://sepolia.etherscan.io/address/0xEAa16A3390D95dd836F710680C1b9c8F422C6b43#code) :
+  ```
+  0xEAa16A3390D95dd836F710680C1b9c8F422C6b43
+  ```
+
+- Token 0 - USD (https://sepolia.etherscan.io/address/0x2f923E3D3d904775B0E1Ba70a2447469E196012e#code) :
+  ```
+  0x2f923E3D3d904775B0E1Ba70a2447469E196012e
+  ```
+
+- Token 1 - EUR (https://sepolia.etherscan.io/address/0x79Bb0e989786A8106c0e8B59092a4F026C79975d#code) :
+  ```
+  0x79Bb0e989786A8106c0e8B59092a4F026C79975d
+  ```
+
+<br>
+Front end repo available at https://github.com/6ygb/CAMM-FRONT
+
+---
 ## What’s inside
 
 - **CAMMFactory**: creates confidential token pairs deterministically.
