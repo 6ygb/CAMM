@@ -25,3 +25,4 @@ coverage.json
 pnpm-lock.yaml
 yarn.lock
 CAMM.json
+libs.sepolia.json
