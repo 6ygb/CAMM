@@ -17,25 +17,29 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 Front-end POC with test contracts at : https://camm.6ygb.dev <br> <br>
 Deployed on Sepolia :
 
-- Factory (https://sepolia.etherscan.io/address/0x1c8FC73B670E585BaBEBF1649faAf6b0742878Ec#code) :
+- Factory (https://sepolia.etherscan.io/address/0x15F98C153493b12D85c0F493e9E7c971203a4809#code) :
   
   ```
-  0x1c8FC73B670E585BaBEBF1649faAf6b0742878Ec
+  0x15F98C153493b12D85c0F493e9E7c971203a4809
   ``` 
 
-- Pair (https://sepolia.etherscan.io/address/0xEAa16A3390D95dd836F710680C1b9c8F422C6b43#code) :
+- Pair (https://sepolia.etherscan.io/address/0x2ab55edf81f6c17fa1A22aF23ed38cE8cF276414#code) :
   ```
-  0xEAa16A3390D95dd836F710680C1b9c8F422C6b43
-  ```
-
-- Token 0 - USD (https://sepolia.etherscan.io/address/0x2f923E3D3d904775B0E1Ba70a2447469E196012e#code) :
-  ```
-  0x2f923E3D3d904775B0E1Ba70a2447469E196012e
+  0x2ab55edf81f6c17fa1A22aF23ed38cE8cF276414
   ```
 
-- Token 1 - EUR (https://sepolia.etherscan.io/address/0x79Bb0e989786A8106c0e8B59092a4F026C79975d#code) :
+- Token 0 - EUR (https://sepolia.etherscan.io/address/0x20E217aD102f18d20faE1B4C7edCD041EF041fE9#code) :
   ```
-  0x79Bb0e989786A8106c0e8B59092a4F026C79975d
+  0x20E217aD102f18d20faE1B4C7edCD041EF041fE9
+  ```
+
+- Token 1 - USD (https://sepolia.etherscan.io/address/0xDa5C50A7b88F1D9F59465f21488db38885aF1d7B#code) :
+  ```
+  0xDa5C50A7b88F1D9F59465f21488db38885aF1d7B
+  ```
+- Pair Library (https://sepolia.etherscan.io/address/0xDE6f4202A2ca25Fd329EcD11f2c62F90248Ad0fd#code) :
+  ```
+  0xDE6f4202A2ca25Fd329EcD11f2c62F90248Ad0fd
   ```
 
 <br>
@@ -46,6 +50,7 @@ Front end repo available at https://github.com/6ygb/CAMM-FRONT
 
 - **CAMMFactory**: creates confidential token pairs deterministically.
 - **CAMMPair**: the core AMM logic (add/remove liquidity, swaps, refunds), all with encrypted math.
+- **CAMMPairLib** : helper library which lightens the pair from heavy computation.
 - **testToken** (example): OpenZeppelin ConfidentialFungibleToken with an initial encrypted mint for testing.
 - **Hardhat tasks** to deploy, add liquidity, swap, remove, and trigger refunds.
 - **Tests** that cover “common paths” and refund flows.
@@ -138,17 +143,14 @@ The same principle is applied everytime a division is needed :
 
 For example, with the swapTokens function (divUpperPart = numerator, divLowerPart = denominator):
 ```solidity
-function _swapTokens(
-        euint64 amount0In,
-        euint64 amount1In,
-        address from,
-        address to,
-        uint256 deadline
-    ) internal ensure(deadline) decryptionAvailable {
-        (euint64 sent0, euint64 sent1) = _transferTokensToPool(from, amount0In, amount1In, true);
-
-        euint16 rng0 = _RNG_Bounded(16384, 3);
-        euint16 rng1 = _RNG_Bounded(16384, 3);
+function computeSwap(
+        euint64 sent0,
+        euint64 sent1,
+        euint64 reserve0,
+        euint64 reserve1
+    ) external returns (euint128, euint128, euint128, euint128) {
+        euint16 rng0 = computeRNG(16384, 3);
+        euint16 rng1 = computeRNG(16384, 3);
 
         // 1% fee integration in the rng multiplier to optimize HCU consuption
         euint32 rng0Upper = FHE.div(FHE.mul(FHE.asEuint32(rng0), uint32(99)), uint32(100));
@@ -166,13 +168,7 @@ function _swapTokens(
         );
         euint128 divLowerPart1 = FHE.mul(FHE.asEuint128(reserve0), FHE.asEuint128(rng1));
 
-        bytes32[] memory cts = new bytes32[](2);
-        cts[0] = FHE.toBytes32(divLowerPart0);
-        cts[1] = FHE.toBytes32(divLowerPart1);
-
-        uint256 requestID = FHE.requestDecryption(cts, this.swapTokensCallback.selector);
-        [...]
-        emit decryptionRequested(from, block.number, requestID);
+        return (divUpperPart0, divUpperPart1, divLowerPart0, divLowerPart1);
     }
 
 function swapTokensCallback(
@@ -250,11 +246,16 @@ In order to compute **obfuscated reserves**, CAMM uses the following formula : <
 $\text{obfuscatedReserve }= \text{reserve }\times \text{ randomPercentageMultiplier }\times \text{ randomEuint16}$ </br>
 $\text{randomPercentageMultiplier } =  1 ± [0.007 - 0.0326]$ </br></br>
 
-This whole process is done in the `_updateObfuscatedReserves()` :
+This whole process takes place in the `_updateObfuscatedReserves()` and delegated to `CAMMPairLib.computeObfuscatedReserves()` :
 ```solidity
-function _updateObfuscatedReserves() internal {
-        euint16 percentage = _RNG_Bounded(256, 70);
+function computeObfuscatedReserves(
+        euint64 reserve0,
+        euint64 reserve1,
+        uint64 scalingFactor
+    ) external returns (euint128, euint128) {
+        euint16 percentage = computeRNG(256, 70);
 
+        //Never overflows because max rng bounded is 326 and max euint16 is 65535
         euint16 scaledPercentage = FHE.mul(percentage, 100);
         euint32 upperBound = FHE.add(FHE.asEuint32(scaledPercentage), uint32(scalingFactor));
         euint32 lowerBound = FHE.sub(uint32(scalingFactor), FHE.asEuint32(scaledPercentage));
@@ -265,14 +266,16 @@ function _updateObfuscatedReserves() internal {
         euint32 reserve0Multiplier = FHE.select(randomBool0, upperBound, lowerBound);
         euint32 reserve1Multiplier = FHE.select(randomBool1, lowerBound, upperBound);
 
-        euint16 rngMultiplier = _RNG();
+        euint16 rngMultiplier = computeRNG(0, 3);
 
+        //need euint64 here because max value for upperBound * max value for rngmultiplier > max euint32
         euint64 reserve0Factor = FHE.mul(FHE.asEuint64(reserve0Multiplier), rngMultiplier);
         euint64 reserve1Factor = FHE.mul(FHE.asEuint64(reserve1Multiplier), rngMultiplier);
 
         euint128 _obfuscatedReserve0 = FHE.mul(FHE.asEuint128(reserve0), reserve0Factor);
         euint128 _obfuscatedReserve1 = FHE.mul(FHE.asEuint128(reserve1), reserve1Factor);
-        [...]
+
+        return (_obfuscatedReserve0, _obfuscatedReserve1);
     }
 ```
 
@@ -352,50 +355,39 @@ In practice, this means liquidity providers must deposit tokens in the same prop
 As CAMM reserves values are encrypted and not directly available (only through **Obfuscated Reserves**) it's hard for a user to compute the good token proportion to add as liquidity. CAMM automaticaly computes the right token amounts to add and refunds the rest to the user, directly in the liquidity adding process. </br> </br>
 Those right amounts are computed using prices derived from **Obfuscated Reserves** :
 ```solidity
-function addLiquidityCallback(
-        uint256 requestID,
+function computeAddLiquidityCallback(
+        euint64 sentAmount0,
+        euint64 sentAmount1,
+        euint128 partialUpperPart0,
+        euint128 partialUpperPart1,
         uint128 divLowerPart0,
         uint128 divLowerPart1,
-        uint128 _obfuscatedReserve0,
-        uint128 _obfuscatedReserve1,
-        bytes[] memory signatures
-) external {
-    if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
-    FHE.checkSignatures(requestID, signatures);
+        uint128 priceToken0,
+        uint128 priceToken1,
+        uint64 scalingFactor
+    ) external returns (euint64, euint64, euint64, euint64, euint64) {
+        euint64 targetAmount0 = FHE.mul(FHE.div(sentAmount1, uint64(priceToken0)), scalingFactor); // 997_000 HCU
+        euint64 targetAmount1 = FHE.mul(FHE.div(sentAmount0, uint64(priceToken1)), scalingFactor); // 997_000 HCU
 
-    uint128 priceToken0 = _obfuscatedReserve0 / (_obfuscatedReserve1 / scalingFactor);
-    uint128 priceToken1 = _obfuscatedReserve1 / (_obfuscatedReserve0 / scalingFactor);
+        ebool isGoodTarget0 = FHE.ge(targetAmount0, sentAmount0);
+        ebool isGoodTarget1 = FHE.ge(targetAmount1, sentAmount1);
 
-    euint64 sentAmount0 = addLiqDecBundle[requestID]._sentAmount0;
-    euint64 sentAmount1 = addLiqDecBundle[requestID]._sentAmount1;
-    [...]
-    euint64 targetAmount0 = FHE.mul(FHE.div(sentAmount1, uint64(priceToken0)), scalingFactor); // right amount for token0
-    euint64 targetAmount1 = FHE.mul(FHE.div(sentAmount0, uint64(priceToken1)), scalingFactor); // right amount for token1
+        euint64 amount0 = FHE.select(isGoodTarget0, sentAmount0, targetAmount0);
+        euint64 amount1 = FHE.select(isGoodTarget1, sentAmount1, targetAmount1);
 
-    ebool isGoodTarget0 = FHE.ge(targetAmount0, sentAmount0); // ensure right amount0 is not larger than the amount0 sent
-    ebool isGoodTarget1 = FHE.ge(targetAmount1, sentAmount1); // ensure right amount1 is not larger than the amount1 sent
+        euint128 divUpperPart0 = FHE.mul(FHE.asEuint128(amount0), partialUpperPart0); // 646_000 HCU
+        euint128 divUpperPart1 = FHE.mul(FHE.asEuint128(amount1), partialUpperPart1); // 646_000 HCU
 
-    euint64 amount0 = FHE.select(isGoodTarget0, sentAmount0, targetAmount0); // selecting the lowest value
-    euint64 amount1 = FHE.select(isGoodTarget1, sentAmount1, targetAmount1); // selecting the lowest value
+        euint64 computedLPAmount0 = FHE.asEuint64(FHE.div(divUpperPart0, divLowerPart0)); // 651_000 HCU
+        euint64 computedLPAmount1 = FHE.asEuint64(FHE.div(divUpperPart1, divLowerPart1)); // 651_000 HCU
 
-    euint128 divUpperPart0 = FHE.mul(FHE.asEuint128(amount0), partialUpperPart0);
-    euint128 divUpperPart1 = FHE.mul(FHE.asEuint128(amount1), partialUpperPart1); 
+        euint64 mintAmount = FHE.min(computedLPAmount0, computedLPAmount1);
 
-    euint64 computedLPAmount0 = FHE.asEuint64(FHE.div(divUpperPart0, divLowerPart0)); 
-    euint64 computedLPAmount1 = FHE.asEuint64(FHE.div(divUpperPart1, divLowerPart1));
+        euint64 refundAmount0 = FHE.sub(sentAmount0, amount0);
+        euint64 refundAmount1 = FHE.sub(sentAmount1, amount1);
 
-    euint64 mintAmount = FHE.min(computedLPAmount0, computedLPAmount1);
-
-    euint64 refundAmount0 = FHE.sub(sentAmount0, amount0); // computing refund amount for token0
-    euint64 refundAmount1 = FHE.sub(sentAmount1, amount1); // computing refund amount for token1
-
-    _transferTokensFromPool(user, refundAmount0, refundAmount1, false); // refunding unspent amounts
-    _mintLP(mintAmount, user);
-    _updateReserves(FHE.add(reserve0, amount0), FHE.add(reserve1, amount1));
-
-    delete pendingDecryption;
-    delete standardRefund[user][requestID];
-}
+        return (refundAmount0, refundAmount1, mintAmount, amount0, amount1);
+    }
 ```
 ---
 
@@ -502,6 +494,7 @@ function requestReserveInfo() public
 ### Deploy
 
 ```bash
+npx hardhat deploy --network sepolia
 npx hardhat task:deploy_camm --network sepolia --scanner 0x...
 ```
 
