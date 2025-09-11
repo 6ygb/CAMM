@@ -5,14 +5,15 @@ import "@nomicfoundation/hardhat-verify";
 import "@typechain/hardhat";
 import "hardhat-deploy";
 import "hardhat-gas-reporter";
-import type { HardhatUserConfig } from "hardhat/config";
 import { vars } from "hardhat/config";
+import "hardhat-contract-sizer";
 import "solidity-coverage";
 
 import "./tasks/accounts";
 import "./tasks/CAMM";
 import "./tasks/standard_inputs";
 
+import type { HardhatUserConfig } from "hardhat/config";
 // Run 'npx hardhat vars setup' to see the list of variables that need to be set
 
 const MNEMONIC: string = vars.get("MNEMONIC", "test test test test test test test test test test test junk");
@@ -22,6 +23,13 @@ const config: HardhatUserConfig = {
   defaultNetwork: "hardhat",
   namedAccounts: {
     deployer: 0,
+  },
+  contractSizer: {
+    alphaSort: true,
+    disambiguatePaths: false,
+    runOnCompile: true,
+    strict: true,
+    only: ["CAMMPair", "CAMMFactory"], // optional: limit the report
   },
   etherscan: {
     apiKey: {
@@ -78,7 +86,7 @@ const config: HardhatUserConfig = {
       // https://hardhat.org/hardhat-network/#solidity-optimizer-support
       optimizer: {
         enabled: true,
-        runs: 200,
+        runs: 50,
       },
       viaIR: true,
       evmVersion: "cancun",
