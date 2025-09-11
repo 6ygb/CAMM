@@ -33,14 +33,27 @@ describe("CAMM Tests", function () {
     expect(await tokenContract2.getAddress()).to.be.properAddress;
   });
 
-  it("Should deploy the CAMM Factory", async function () {
-    const CAMMFactory = await ethers.getContractFactory("CAMMFactory", this.signers[0]);
+  it("Should deploy the CAMM Pair Lib and the CAMM Factory", async function () {
+    const LibFactory = await ethers.getContractFactory("CAMMPairLib", this.signers[0]);
+    const lib = await LibFactory.deploy();
+    await lib.waitForDeployment();
+    const libAddr = await lib.getAddress();
+
+    log_str = "Lib address : " + libAddr.toString();
+    log(log_str, "deploy lib & factory");
+
+    const CAMMFactory = await ethers.getContractFactory("CAMMFactory", {
+      signer: this.signers[0],
+      libraries: {
+        CAMMPairLib: libAddr,
+      },
+    });
     const CAMMFactoryContract = await CAMMFactory.deploy();
     await CAMMFactoryContract.waitForDeployment();
 
     this.factory = CAMMFactoryContract;
     log_str = "Factory address : " + this.factory.target.toString();
-    log(log_str, "deploy factory");
+    log(log_str, "deploy lib & factory");
 
     //eslint-disable-next-line @typescript-eslint/no-unused-expressions
     expect(this.factory.target.toString()).to.properAddress;

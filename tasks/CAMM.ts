@@ -183,9 +183,10 @@ task("task:deploy_camm", "Deploys the CAMM contracts")
   )
   .setAction(async function (_taskArguments: TaskArguments, hre) {
     console.log("Deploying CAMM contracts.");
-    const { ethers } = hre;
-    const signers = await ethers.getSigners();
-    const deployer = signers[0];
+    const { ethers, deployments, getNamedAccounts, network, run } = hre;
+    const { deploy, get, getOrNull, save, getArtifact, log } = deployments;
+    const { deployer } = await getNamedAccounts();
+    const deployerSigner = await ethers.getSigner(deployer);
 
     let scannerAddress: string;
     if (_taskArguments.scanner) {
@@ -195,35 +196,66 @@ task("task:deploy_camm", "Deploys the CAMM contracts")
         throw new Error(`Invalid --scanner address: ${_taskArguments.scanner}`);
       }
     } else {
-      scannerAddress = deployer.address;
+      scannerAddress = deployerSigner.address;
     }
 
-    console.log(`Price scanner set to: ${scannerAddress} .`);
+    console.log(`Network: ${network.name}`);
+    console.log(`Deployer: ${deployer}`);
+    console.log(`Price scanner: ${scannerAddress}`);
 
-    const CAMMFactory = await ethers.getContractFactory("CAMMFactory");
-    const CAMMFactoryContract = await CAMMFactory.connect(deployer).deploy();
-    await CAMMFactoryContract.deploymentTransaction()?.wait();
-    const CAMMFactoryAddress = await CAMMFactoryContract.getAddress();
-    console.log(`Factory deployed at : ${CAMMFactoryAddress}`);
+    // 1) Make sure lib + factory from fixtures are deployed (runs scripts if not yet)
+    //    This respects func.dependencies between 'factory' and 'lib'
+    await run("deploy", { tags: "factory" });
 
-    const tokenFactory = await ethers.getContractFactory("ConfidentialToken");
-    const token0Contract = await tokenFactory.connect(deployer).deploy("Us Dollar", "USD");
-    await token0Contract.deploymentTransaction()?.wait();
-    const token0Address = await token0Contract.getAddress();
-    console.log(`Token0 deployed at : ${token0Address}`);
+    const lib = await get("CAMMPairLib");
+    const factoryDep = await get("CAMMFactory");
+    const CAMMFactoryAddress = factoryDep.address;
+    console.log(`CAMMPairLib: ${lib.address}`);
+    console.log(`CAMMFactory: ${CAMMFactoryAddress}`);
 
-    const token1Contract = await tokenFactory.connect(deployer).deploy("Euro", "EUR");
-    await token1Contract.deploymentTransaction()?.wait();
-    const token1Address = await token1Contract.getAddress();
-    console.log(`Token1 deployed at : ${token1Address}`);
+    // 2) Ensure test tokens exist as named deployments
+    let token0Dep = await getOrNull("TokenUSD");
+    if (!token0Dep) {
+      token0Dep = await deploy("TokenUSD", {
+        from: deployer,
+        log: true,
+        contract: "ConfidentialToken",
+        args: ["Us Dollar", "USD"],
+      });
+    }
+    let token1Dep = await getOrNull("TokenEUR");
+    if (!token1Dep) {
+      token1Dep = await deploy("TokenEUR", {
+        from: deployer,
+        log: true,
+        contract: "ConfidentialToken",
+        args: ["Euro", "EUR"],
+      });
+    }
+    const token0Address = token0Dep.address;
+    const token1Address = token1Dep.address;
+    console.log(`Token0 (USD): ${token0Address}`);
+    console.log(`Token1 (EUR): ${token1Address}`);
 
-    const createPairTx = await CAMMFactoryContract.createPair(token0Address, token1Address, scannerAddress);
-    await createPairTx.wait();
-    const pairAddress = await CAMMFactoryContract.getPair(token0Address, token1Address);
-    console.log(`Pair deployed at : ${pairAddress}`);
+    const factory = await ethers.getContractAt("CAMMFactory", CAMMFactoryAddress, deployerSigner);
+    const existingPair = await factory.getPair(token0Address, token1Address);
 
-    //No need to mint tokens here, the testToken contract constructor mints 100k to deployer.
+    let pairAddress: string;
+    if (existingPair === ethers.ZeroAddress) {
+      const tx = await factory.createPair(token0Address, token1Address, scannerAddress);
+      const rc = await tx.wait();
+      if (!rc?.status) throw new Error("createPair failed");
+      pairAddress = await factory.getPair(token0Address, token1Address);
+      console.log(`Pair created at: ${pairAddress}`);
+    } else {
+      pairAddress = existingPair;
+      console.log(`Pair already exists at: ${pairAddress}`);
+    }
 
+    const pairArtifact = await getArtifact("CAMMPair");
+    await save("CAMMPair", { address: pairAddress, abi: pairArtifact.abi });
+
+    // 5) Persist in CAMM.json for external tools
     writeConfig({
       PAIR_ADDRESS: pairAddress,
       FACTORY_ADDRESS: CAMMFactoryAddress,
