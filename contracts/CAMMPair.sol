@@ -2,17 +2,33 @@
 
 pragma solidity ^0.8.27;
 
-import "@fhevm/solidity/lib/FHE.sol";
+import {FHE, externalEuint64, ebool, euint16, euint32, euint64, euint128} from "@fhevm/solidity/lib/FHE.sol";
 import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
-import "@openzeppelin/confidential-contracts/token/ConfidentialFungibleToken.sol";
+import {ERC7984} from "./OZ-confidential-contracts-fork/ERC7984.sol";
+import {IERC7984} from "./OZ-confidential-contracts-fork/IERC7984.sol";
+import {CAMMPairLib} from "./CAMMPairLib.sol";
 
+/**
+ * To beat (Dangerously close to size limit): 
+·------------------------|--------------------------------|--------------------------------·
+ |  Solc version: 0.8.27  ·  Optimizer enabled: true       ·  Runs: 50                      │
+ ·························|································|·································
+ |  Contract Name         ·  Deployed size (KiB) (change)  ·  Initcode size (KiB) (change)  │
+ ·························|································|·································
+ |  CAMMFactory           ·                23.699 (0.000)  ·                23.725 (0.000)  │
+ ·························|································|·································
+ |  CAMMPair              ·                20.855 (0.000)  ·                22.729 (0.000)  │
+ ·························|································|·································
+ |  CAMMPairLib           ·                 5.082 (0.000)  ·                 5.113 (0.000)  │
+ ·------------------------|--------------------------------|--------------------------------·
+ */
 /**
  * @title CAMMPair
  * @dev Confidential Automated Market Maker Pair.
  *      This contract implements liquidity provision, token swapping, and batch settlement using confidential computations.
  *      Inspired by UniswapV2 : https://docs.uniswap.org/contracts/v2/overview
  */
-contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
+contract CAMMPair is ERC7984, SepoliaConfig {
     // Structs
     struct addLiqDecBundleStruct {
         euint64 _sentAmount0;
@@ -83,7 +99,6 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     error PendingDecryption(uint256 until);
     error Forbidden();
     error WrongRequestID();
-    error DecryptionBlocked();
     error NoRefund();
 
     // Variables
@@ -99,8 +114,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
     address public cammPriceScanner;
     address public token0Address;
     address public token1Address;
-    IConfidentialFungibleToken private token0;
-    IConfidentialFungibleToken private token1;
+    IERC7984 private token0;
+    IERC7984 private token1;
 
     // Reserve values for token0 and token1
     euint64 private reserve0;
@@ -113,7 +128,7 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @dev Constructor for the pair contract.
      * Sets the factory address and initializes the token.
      */
-    constructor(address _cammPriceScanner) ConfidentialFungibleToken("Liquidity Token", "PAIR", "") {
+    constructor(address _cammPriceScanner) ERC7984("Liquidity Token", "PAIR", "") {
         factory = msg.sender;
         cammPriceScanner = _cammPriceScanner;
 
@@ -162,30 +177,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      */
     function initialize(address _token0, address _token1) external {
         if (msg.sender != factory) revert Forbidden();
-        token0 = IConfidentialFungibleToken(_token0);
-        token1 = IConfidentialFungibleToken(_token1);
+        token0 = IERC7984(_token0);
+        token1 = IERC7984(_token1);
         token0Address = _token0;
         token1Address = _token1;
-    }
-
-    /**
-     * @dev Generates a random number non zero number used during decryption process.
-     */
-    function _RNG() internal returns (euint16) {
-        euint16 randomSeed = FHE.randEuint16();
-        ebool tooSmall = FHE.lt(randomSeed, 3);
-        euint16 toAdd = FHE.select(tooSmall, FHE.asEuint16(3), FHE.asEuint16(0));
-        euint16 rngNumber = FHE.add(randomSeed, toAdd);
-        return rngNumber;
-    }
-
-    /**
-     * @dev Generates a random number non zero bounded number used price range computation.
-     */
-    function _RNG_Bounded(uint16 max, uint16 toAdd) internal returns (euint16) {
-        euint16 randomSeed = FHE.randEuint16(max);
-        euint16 rngNumber = FHE.add(randomSeed, toAdd);
-        return rngNumber;
     }
 
     /**
@@ -209,27 +204,11 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      *      Computed price from obfuscated reserve is +- 7% close to the real price.
      */
     function _updateObfuscatedReserves() internal {
-        euint16 percentage = _RNG_Bounded(256, 70);
-
-        //Never overflows because max rng bounded is 326 and max euint16 is 65535
-        euint16 scaledPercentage = FHE.mul(percentage, 100);
-        euint32 upperBound = FHE.add(FHE.asEuint32(scaledPercentage), uint32(scalingFactor));
-        euint32 lowerBound = FHE.sub(uint32(scalingFactor), FHE.asEuint32(scaledPercentage));
-
-        ebool randomBool0 = FHE.randEbool();
-        ebool randomBool1 = FHE.randEbool();
-
-        euint32 reserve0Multiplier = FHE.select(randomBool0, upperBound, lowerBound);
-        euint32 reserve1Multiplier = FHE.select(randomBool1, lowerBound, upperBound);
-
-        euint16 rngMultiplier = _RNG();
-
-        //need euint64 here because max value for upperBound * max value for rngmultiplier > max euint32
-        euint64 reserve0Factor = FHE.mul(FHE.asEuint64(reserve0Multiplier), rngMultiplier);
-        euint64 reserve1Factor = FHE.mul(FHE.asEuint64(reserve1Multiplier), rngMultiplier);
-
-        euint128 _obfuscatedReserve0 = FHE.mul(FHE.asEuint128(reserve0), reserve0Factor);
-        euint128 _obfuscatedReserve1 = FHE.mul(FHE.asEuint128(reserve1), reserve1Factor);
+        (euint128 _obfuscatedReserve0, euint128 _obfuscatedReserve1) = CAMMPairLib.computeObfuscatedReserves(
+            reserve0,
+            reserve1,
+            scalingFactor
+        );
 
         obfuscatedReserves.obfuscatedReserve0 = _obfuscatedReserve0;
         obfuscatedReserves.obfuscatedReserve1 = _obfuscatedReserve1;
@@ -301,8 +280,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         euint64 balance0Before = token0.confidentialBalanceOf(address(this));
         euint64 balance1Before = token1.confidentialBalanceOf(address(this));
 
-        FHE.allowTransient(amount0Out, address(token0));
-        FHE.allowTransient(amount1Out, address(token1));
+        FHE.allowTransient(amount0Out, token0Address);
+        FHE.allowTransient(amount1Out, token1Address);
 
         token0.confidentialTransfer(to, amount0Out);
         token1.confidentialTransfer(to, amount1Out);
@@ -358,22 +337,19 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      * @param amount1 The amount of token1 provided.
      */
     function _firstMint(address to, euint64 amount0, euint64 amount1) internal {
-        euint64 liquidityAmount;
-        liquidityAmount = FHE.add(FHE.shr(amount0, 1), FHE.shr(amount1, 1));
+        (euint64 liquidityAmount, euint64 amount0Back, euint64 amount1Back) = CAMMPairLib.computeFirstMint(
+            amount0,
+            amount1,
+            MINIMIMUM_LIQUIDITY
+        );
 
-        ebool isBelowMinimum = FHE.lt(liquidityAmount, MINIMIMUM_LIQUIDITY);
-        liquidityAmount = FHE.select(isBelowMinimum, ZERO, liquidityAmount);
-        euint64 amount0Back = FHE.select(isBelowMinimum, amount0, ZERO);
-        euint64 amount1Back = FHE.select(isBelowMinimum, amount1, ZERO);
-
-        FHE.allowTransient(amount0Back, address(token0));
-        FHE.allowTransient(amount1Back, address(token1));
+        FHE.allowTransient(amount0Back, token0Address);
+        FHE.allowTransient(amount1Back, token1Address);
 
         token0.confidentialTransfer(msg.sender, amount0Back); // refund first liquidity if it is below the minimal amount
         token1.confidentialTransfer(msg.sender, amount1Back); // refund first liquidity if it is below the minimal amount
 
         _mintLP(liquidityAmount, to);
-        _updateObfuscatedReserves();
     }
 
     /**
@@ -386,8 +362,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      */
     function addLiquidity(euint64 amount0, euint64 amount1, uint256 deadline) external {
         //Allow tokens to use the related amount variable
-        FHE.allowTransient(amount0, address(token0));
-        FHE.allowTransient(amount1, address(token1));
+        FHE.allowTransient(amount0, token0Address);
+        FHE.allowTransient(amount1, token1Address);
 
         _addLiquidity(amount0, amount1, msg.sender, deadline);
     }
@@ -411,8 +387,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         euint64 amount1 = FHE.fromExternal(encryptedAmount1, inputProof);
 
         //Allow tokens to use the related amount variable
-        FHE.allowTransient(amount0, address(token0));
-        FHE.allowTransient(amount1, address(token1));
+        FHE.allowTransient(amount0, token0Address);
+        FHE.allowTransient(amount1, token1Address);
 
         _addLiquidity(amount0, amount1, msg.sender, deadline);
     }
@@ -437,16 +413,14 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         } else {
             //sending the tokens without adding them to pool
             (euint64 sentAmount0, euint64 sentAmount1) = _transferTokensToPool(from, amount0, amount1, false); // 844_000 HCU
+            euint128 currentLPSupply = FHE.asEuint128(confidentialTotalSupply());
 
-            euint16 rng0 = _RNG(); // 184_000 HCU
-            euint16 rng1 = _RNG(); // 184_000 HCU
-
-            euint128 divLowerPart0 = FHE.mul(FHE.asEuint128(reserve0), FHE.asEuint128(rng0)); // 646_000 HCU
-            euint128 divLowerPart1 = FHE.mul(FHE.asEuint128(reserve1), FHE.asEuint128(rng1)); // 646_000 HCU
-
-            euint64 currentLPSupply = confidentialTotalSupply();
-            euint128 partialUpperPart0 = FHE.mul(FHE.asEuint128(currentLPSupply), FHE.asEuint128(rng0)); // 646_000 HCU
-            euint128 partialUpperPart1 = FHE.mul(FHE.asEuint128(currentLPSupply), FHE.asEuint128(rng1)); // 646_000 HCU
+            (
+                euint128 divLowerPart0,
+                euint128 divLowerPart1,
+                euint128 partialUpperPart0,
+                euint128 partialUpperPart1
+            ) = CAMMPairLib.computeAddLiquidity(reserve0, reserve1, currentLPSupply);
 
             bytes32[] memory cts = new bytes32[](4);
             cts[0] = FHE.toBytes32(divLowerPart0);
@@ -488,22 +462,15 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      *      Verifies the request, reconstructs pricing targets from obfuscated reserves,
      *      computes the LP mint amount, refunds any excess tokens, mints LP, and updates reserves.
      * @param requestID Gateway request identifier expected to match the pending one.
-     * @param divLowerPart0 Decrypted divisor component for token0 side.
-     * @param divLowerPart1 Decrypted divisor component for token1 side.
-     * @param _obfuscatedReserve0 Decrypted obfuscated reserve for token0 (for price).
-     * @param _obfuscatedReserve1 Decrypted obfuscated reserve for token1 (for price).
-     * @param signatures Gateway signatures attesting the decryption result.
+     * @param cleartexts Decrypted division lower parts and obfuscated reserves.
+     * @param decryptionProof Gateway signatures attesting the decryption result.
      */
-    function addLiquidityCallback(
-        uint256 requestID,
-        uint128 divLowerPart0,
-        uint128 divLowerPart1,
-        uint128 _obfuscatedReserve0,
-        uint128 _obfuscatedReserve1,
-        bytes[] memory signatures
-    ) external {
+    function addLiquidityCallback(uint256 requestID, bytes memory cleartexts, bytes memory decryptionProof) external {
         if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
-        FHE.checkSignatures(requestID, signatures);
+        FHE.checkSignatures(requestID, cleartexts, decryptionProof);
+
+        (uint128 divLowerPart0, uint128 divLowerPart1, uint128 _obfuscatedReserve0, uint128 _obfuscatedReserve1) = abi
+            .decode(cleartexts, (uint128, uint128, uint128, uint128));
 
         uint128 priceToken0 = _obfuscatedReserve0 / (_obfuscatedReserve1 / scalingFactor);
         uint128 priceToken1 = _obfuscatedReserve1 / (_obfuscatedReserve0 / scalingFactor);
@@ -514,25 +481,23 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         euint128 partialUpperPart1 = addLiqDecBundle[requestID]._partialupperPart1;
         address user = addLiqDecBundle[requestID]._user;
 
-        euint64 targetAmount0 = FHE.mul(FHE.div(sentAmount1, uint64(priceToken0)), scalingFactor); // 997_000 HCU
-        euint64 targetAmount1 = FHE.mul(FHE.div(sentAmount0, uint64(priceToken1)), scalingFactor); // 997_000 HCU
-
-        ebool isGoodTarget0 = FHE.ge(targetAmount0, sentAmount0);
-        ebool isGoodTarget1 = FHE.ge(targetAmount1, sentAmount1);
-
-        euint64 amount0 = FHE.select(isGoodTarget0, sentAmount0, targetAmount0);
-        euint64 amount1 = FHE.select(isGoodTarget1, sentAmount1, targetAmount1);
-
-        euint128 divUpperPart0 = FHE.mul(FHE.asEuint128(amount0), partialUpperPart0); // 646_000 HCU
-        euint128 divUpperPart1 = FHE.mul(FHE.asEuint128(amount1), partialUpperPart1); // 646_000 HCU
-
-        euint64 computedLPAmount0 = FHE.asEuint64(FHE.div(divUpperPart0, divLowerPart0)); // 651_000 HCU
-        euint64 computedLPAmount1 = FHE.asEuint64(FHE.div(divUpperPart1, divLowerPart1)); // 651_000 HCU
-
-        euint64 mintAmount = FHE.min(computedLPAmount0, computedLPAmount1);
-
-        euint64 refundAmount0 = FHE.sub(sentAmount0, amount0);
-        euint64 refundAmount1 = FHE.sub(sentAmount1, amount1);
+        (
+            euint64 refundAmount0,
+            euint64 refundAmount1,
+            euint64 mintAmount,
+            euint64 amount0,
+            euint64 amount1
+        ) = CAMMPairLib.computeAddLiquidityCallback(
+                sentAmount0,
+                sentAmount1,
+                partialUpperPart0,
+                partialUpperPart1,
+                divLowerPart0,
+                divLowerPart1,
+                priceToken0,
+                priceToken1,
+                scalingFactor
+            );
 
         _transferTokensFromPool(user, refundAmount0, refundAmount1, false);
         _mintLP(mintAmount, user);
@@ -556,23 +521,10 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint256 deadline
     ) internal ensure(deadline) decryptionAvailable {
         euint64 sentLP = _transferLPToPool(from, lpAmount);
+        euint128 currentLPSupply128 = FHE.asEuint128(confidentialTotalSupply());
 
-        euint16 rng0 = _RNG(); // 184_000 HCU
-        euint16 rng1 = _RNG(); // 184_000 HCU
-
-        euint64 currentLPSupply = confidentialTotalSupply();
-
-        euint128 divUpperPart0 = FHE.mul(
-            FHE.mul(FHE.asEuint128(sentLP), FHE.asEuint128(reserve0)),
-            FHE.asEuint128(rng0)
-        );
-        euint128 divUpperPart1 = FHE.mul(
-            FHE.mul(FHE.asEuint128(sentLP), FHE.asEuint128(reserve1)),
-            FHE.asEuint128(rng1)
-        );
-
-        euint128 divLowerPart0 = FHE.mul(FHE.asEuint128(currentLPSupply), FHE.asEuint128(rng0));
-        euint128 divLowerPart1 = FHE.mul(FHE.asEuint128(currentLPSupply), FHE.asEuint128(rng1));
+        (euint128 divUpperPart0, euint128 divUpperPart1, euint128 divLowerPart0, euint128 divLowerPart1) = CAMMPairLib
+            .computeRemoveLiquidity(reserve0, reserve1, sentLP, currentLPSupply128);
 
         bytes32[] memory cts = new bytes32[](2);
         cts[0] = FHE.toBytes32(divLowerPart0);
@@ -602,14 +554,23 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         emit decryptionRequested(from, block.number, requestID);
     }
 
+    /**
+     * @dev Callback for an remove-liquidity decryption request.
+     *      Verifies the request,,
+     *      computes the LP burn amount, rsend tokens to user, and updates reserves.
+     * @param requestID Gateway request identifier expected to match the pending one.
+     * @param cleartexts Decrypted division lower parts.
+     * @param decryptionProof Gateway signatures attesting the decryption result.
+     */
     function removeLiquidityCallback(
         uint256 requestID,
-        uint128 divLowerPart0,
-        uint128 divLowerPart1,
-        bytes[] memory signatures
+        bytes memory cleartexts,
+        bytes memory decryptionProof
     ) external {
         if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
-        FHE.checkSignatures(requestID, signatures);
+        FHE.checkSignatures(requestID, cleartexts, decryptionProof);
+
+        (uint128 divLowerPart0, uint128 divLowerPart1) = abi.decode(cleartexts, (uint128, uint128));
 
         euint64 burnAmount = removeLiqDecBundle[requestID]._lpSent;
         euint128 divUpperPart0 = removeLiqDecBundle[requestID]._upperPart0;
@@ -673,8 +634,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      */
     function swapTokens(euint64 amount0In, euint64 amount1In, address to, uint256 deadline) external {
         //Allow tokens to use the amounts
-        FHE.allowTransient(amount0In, address(token0));
-        FHE.allowTransient(amount1In, address(token1));
+        FHE.allowTransient(amount0In, token0Address);
+        FHE.allowTransient(amount1In, token1Address);
 
         _swapTokens(amount0In, amount1In, msg.sender, to, deadline);
     }
@@ -701,8 +662,8 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         euint64 amount1In = FHE.fromExternal(encryptedAmount1In, inputProof);
 
         //Allow tokens to use the amounts
-        FHE.allowTransient(amount0In, address(token0));
-        FHE.allowTransient(amount1In, address(token1));
+        FHE.allowTransient(amount0In, token0Address);
+        FHE.allowTransient(amount1In, token1Address);
 
         _swapTokens(amount0In, amount1In, msg.sender, to, deadline);
     }
@@ -728,30 +689,9 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
         uint256 deadline
     ) internal ensure(deadline) decryptionAvailable {
         (euint64 sent0, euint64 sent1) = _transferTokensToPool(from, amount0In, amount1In, true);
-        //uint16 max                        65,535
-        //uint64 max                        18,446,744,073,709,551,615
-        //uint64 max^2                      10,973,678,151,985,686,339,682,919,724,057,600
-        //uint64 max^2 * 16384 + 3          179,792,742,842,133,484,989,364,956,758,959,718,403
-        //uint128 max                       340,282,366,920,938,463,463,374,607,431,768,211,455
 
-        euint16 rng0 = _RNG_Bounded(16384, 3);
-        euint16 rng1 = _RNG_Bounded(16384, 3);
-
-        // 1% fee integration in the rng multiplier to optimize HCU consuption
-        euint32 rng0Upper = FHE.div(FHE.mul(FHE.asEuint32(rng0), uint32(99)), uint32(100));
-        euint32 rng1Upper = FHE.div(FHE.mul(FHE.asEuint32(rng1), uint32(99)), uint32(100));
-
-        euint128 divUpperPart0 = FHE.mul(
-            FHE.mul(FHE.asEuint128(sent1), FHE.asEuint128(reserve0)),
-            FHE.asEuint128(rng0Upper)
-        );
-        euint128 divLowerPart0 = FHE.mul(FHE.asEuint128(reserve1), FHE.asEuint128(rng0));
-
-        euint128 divUpperPart1 = FHE.mul(
-            FHE.mul(FHE.asEuint128(sent0), FHE.asEuint128(reserve1)),
-            FHE.asEuint128(rng1Upper)
-        );
-        euint128 divLowerPart1 = FHE.mul(FHE.asEuint128(reserve0), FHE.asEuint128(rng1));
+        (euint128 divUpperPart0, euint128 divUpperPart1, euint128 divLowerPart0, euint128 divLowerPart1) = CAMMPairLib
+            .computeSwap(sent0, sent1, reserve0, reserve1);
 
         bytes32[] memory cts = new bytes32[](2);
         cts[0] = FHE.toBytes32(divLowerPart0);
@@ -792,25 +732,21 @@ contract CAMMPair is ConfidentialFungibleToken, SepoliaConfig {
      *      transfers tokens to the recipient, exposes I/O to the sender via ACL,
      *      emits the Swap event, and clears pending state/refund.
      * @param requestID Gateway request identifier expected to match the pending one.
-     * @param _divLowerPart0 Decrypted divisor for token0 output calculation.
-     * @param _divLowerPart1 Decrypted divisor for token1 output calculation.
-     * @param signatures Gateway signatures attesting the decryption result.
+     * @param cleartexts Decrypted division lower parts .
+     * @param decryptionProof Gateway signatures attesting the decryption result.
      */
-    function swapTokensCallback(
-        uint256 requestID,
-        uint128 _divLowerPart0,
-        uint128 _divLowerPart1,
-        bytes[] memory signatures
-    ) external {
+    function swapTokensCallback(uint256 requestID, bytes memory cleartexts, bytes memory decryptionProof) external {
         if (pendingDecryption.currentRequestID != requestID) revert WrongRequestID();
-        FHE.checkSignatures(requestID, signatures);
+        FHE.checkSignatures(requestID, cleartexts, decryptionProof);
+
+        (uint128 _divLowerPart0, uint128 _divLowerPart1) = abi.decode(cleartexts, (uint128, uint128));
 
         euint128 _divUpperPart0 = swapDecBundle[requestID].divUpperPart0;
         euint128 _divUpperPart1 = swapDecBundle[requestID].divUpperPart1;
         address from = swapDecBundle[requestID].from;
         address to = swapDecBundle[requestID].to;
 
-        // always fits, check overflow computation in _swapTokens() comments.
+        // always fits, check overflow computation in CAMMPairLib.computeSwap() comments.
         euint64 amount0Out = FHE.asEuint64(FHE.div(_divUpperPart0, _divLowerPart0));
         euint64 amount1Out = FHE.asEuint64(FHE.div(_divUpperPart1, _divLowerPart1));
 
