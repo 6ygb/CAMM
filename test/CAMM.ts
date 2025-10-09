@@ -194,26 +194,13 @@ describe("CAMM Tests", function () {
   it("Should retrieve first approx price", async function () {
     const pair = this.pair;
 
-    const getPermissionTx = await pair.requestReserveInfo();
-    const getPermissionReceipt = await getPermissionTx.wait();
-    expect(getPermissionReceipt.status).to.equal(1);
-
     const { obfuscatedReserve0, obfuscatedReserve1 } = await pair.obfuscatedReserves();
-    const clearObfuscatedReserve0 = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      obfuscatedReserve0,
-      await pair.getAddress(),
-      this.signers[0],
-    );
 
-    const clearObfuscatedReserve1 = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      obfuscatedReserve1,
-      await pair.getAddress(),
-      this.signers[0],
-    );
+    const values = await fhevm.publicDecrypt([obfuscatedReserve0, obfuscatedReserve1]);
+    const clearObfuscatedReserve0 = values[obfuscatedReserve0];
+    const clearObfuscatedReserve1 = values[obfuscatedReserve1];
 
-    const price = (clearObfuscatedReserve0 * this.decimals) / clearObfuscatedReserve1;
+    const price = (BigInt(clearObfuscatedReserve0) * this.decimals) / BigInt(clearObfuscatedReserve1);
     log_str = `Current approximated price : ${price}, without decimals : ${ethers.formatUnits(price.toString(), 6)}`;
     log(log_str, "retrieve price");
   });
@@ -416,26 +403,13 @@ describe("CAMM Tests", function () {
     log_str = `New balance 2 after : ${clearBalance2After / this.decimals}`;
     log(log_str, "retrieve price & balances");
 
-    const getPermissionTx = await pair.requestReserveInfo();
-    const getPermissionReceipt = await getPermissionTx.wait();
-    expect(getPermissionReceipt.status).to.equal(1);
-
     const { obfuscatedReserve0, obfuscatedReserve1 } = await pair.obfuscatedReserves();
-    const clearObfuscatedReserve0 = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      obfuscatedReserve0,
-      await pair.getAddress(),
-      this.signers[0],
-    );
 
-    const clearObfuscatedReserve1 = await fhevm.userDecryptEuint(
-      FhevmType.euint128,
-      obfuscatedReserve1,
-      await pair.getAddress(),
-      this.signers[0],
-    );
+    const values = await fhevm.publicDecrypt([obfuscatedReserve0, obfuscatedReserve1]);
+    const clearObfuscatedReserve0 = values[obfuscatedReserve0];
+    const clearObfuscatedReserve1 = values[obfuscatedReserve1];
 
-    const price = (clearObfuscatedReserve0 * this.decimals) / clearObfuscatedReserve1;
+    const price = (BigInt(clearObfuscatedReserve0) * this.decimals) / BigInt(clearObfuscatedReserve1);
     log_str = `New approximated price : ${price}, without decimals : ${ethers.formatUnits(price.toString(), 6)}`;
     log(log_str, "retrieve price & balances");
   });
