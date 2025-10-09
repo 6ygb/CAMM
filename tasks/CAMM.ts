@@ -6,7 +6,6 @@ import type { AddressLike } from "ethers";
 import type { TaskArguments } from "hardhat/types";
 import fs from "fs";
 import path from "path";
-import { token } from "../types/@openzeppelin/confidential-contracts";
 
 type CAMMConfig = {
   PAIR_ADDRESS?: string;
@@ -76,14 +75,12 @@ async function decryptPairEuint64(
   const clearVar = await fhevm.userDecryptEuint(FhevmType.euint64, handle, await pair.getAddress(), signer);
   return clearVar;
 }
-async function decryptPairEuint128(
-  handle: string,
-  fhevm: HardhatFhevmRuntimeEnvironment,
-  pair: CAMMPair,
-  signer: HardhatEthersSigner,
-) {
-  const clearVar = await fhevm.userDecryptEuint(FhevmType.euint128, handle, await pair.getAddress(), signer);
-  return clearVar;
+async function decryptPairObfuscatedReserves(handles: string[], fhevm: HardhatFhevmRuntimeEnvironment) {
+  const values = await fhevm.publicDecrypt(handles);
+  const clearObfuscatedReserve0 = values[handles[0]];
+  const clearObfuscatedReserve1 = values[handles[1]];
+
+  return [clearObfuscatedReserve0, clearObfuscatedReserve1];
 }
 async function getLPBalance(fhevm: HardhatFhevmRuntimeEnvironment, pair: CAMMPair, signer: HardhatEthersSigner) {
   const encryptedLPBalance = await pair.confidentialBalanceOf(signer.address);
@@ -98,19 +95,15 @@ async function setOperator(token: ConfidentialToken, operatorAddress: AddressLik
   }
 }
 
-async function getCurrentPrice(fhevm: HardhatFhevmRuntimeEnvironment, pair: CAMMPair, signer: HardhatEthersSigner) {
-  // const requestTx = await pair.requestReserveInfo();
-  // const requestReceipt = await requestTx.wait();
-  // if (!requestReceipt?.status) {
-  //   throw new Error("Request reserve info Tx failed.");
-  // }
-
+async function getCurrentPrice(fhevm: HardhatFhevmRuntimeEnvironment, pair: CAMMPair) {
   const { obfuscatedReserve0, obfuscatedReserve1 } = await pair.obfuscatedReserves();
-  const clearObfuscatedReserve0 = await decryptPairEuint128(obfuscatedReserve0, fhevm, pair, signer);
-  const clearObfuscatedReserve1 = await decryptPairEuint128(obfuscatedReserve1, fhevm, pair, signer);
+  const [clearObfuscatedReserve0, clearObfuscatedReserve1] = await decryptPairObfuscatedReserves(
+    [obfuscatedReserve0, obfuscatedReserve1],
+    fhevm,
+  );
 
-  const priceToken0Token1 = (clearObfuscatedReserve0 * scalingFactor) / clearObfuscatedReserve1;
-  const priceToken1Token0 = (clearObfuscatedReserve1 * scalingFactor) / clearObfuscatedReserve0;
+  const priceToken0Token1 = (BigInt(clearObfuscatedReserve0) * scalingFactor) / BigInt(clearObfuscatedReserve1);
+  const priceToken1Token0 = (BigInt(clearObfuscatedReserve1) * scalingFactor) / BigInt(clearObfuscatedReserve0);
   return { priceToken0Token1, priceToken1Token0 };
 }
 
@@ -348,7 +341,7 @@ task("task:get_trading_price", "Retrives current trading price on pair.").setAct
   const pair = await ethers.getContractAt("CAMMPair", pairAddress, signer);
   await fhevm.initializeCLIApi();
 
-  const { priceToken0Token1, priceToken1Token0 } = await getCurrentPrice(fhevm, pair, signer);
+  const { priceToken0Token1, priceToken1Token0 } = await getCurrentPrice(fhevm, pair);
   console.log(
     `Current Trading price \nToken 0 to Token 1 : ${ethers.formatUnits(priceToken0Token1.toString(), 6)}\nToken 1 to Token 0 : ${ethers.formatUnits(priceToken1Token0.toString(), 6)}`,
   );
