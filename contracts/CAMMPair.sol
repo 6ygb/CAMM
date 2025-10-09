@@ -216,25 +216,8 @@ contract CAMMPair is ERC7984, SepoliaConfig {
         FHE.allowThis(obfuscatedReserves.obfuscatedReserve0);
         FHE.allowThis(obfuscatedReserves.obfuscatedReserve1);
 
-        //Allow CAMM price scanner address
-        FHE.allow(obfuscatedReserves.obfuscatedReserve0, cammPriceScanner);
-        FHE.allow(obfuscatedReserves.obfuscatedReserve1, cammPriceScanner);
-    }
-
-    /**
-     * @dev Grants temporary read access to the caller for the obfuscated reserves
-     *      and emits an event carrying those encrypted values.
-     *      Useful for off-chain consumers to pick up fresh obfuscated data.
-     */
-    function requestReserveInfo() public {
-        FHE.allow(obfuscatedReserves.obfuscatedReserve0, msg.sender);
-        FHE.allow(obfuscatedReserves.obfuscatedReserve1, msg.sender);
-        emit discloseReservesInfo(
-            block.number,
-            msg.sender,
-            obfuscatedReserves.obfuscatedReserve0,
-            obfuscatedReserves.obfuscatedReserve1
-        );
+        FHE.makePubliclyDecryptable(obfuscatedReserves.obfuscatedReserve0);
+        FHE.makePubliclyDecryptable(obfuscatedReserves.obfuscatedReserve1);
     }
 
     /**
