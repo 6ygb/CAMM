@@ -12,7 +12,6 @@ type CAMMConfig = {
   FACTORY_ADDRESS?: string;
   TOKEN0_ADDRESS?: string;
   TOKEN1_ADDRESS?: string;
-  SCANNER_ADDRESS?: string;
   LIQ_ADDED?: boolean;
 };
 
@@ -168,34 +167,16 @@ async function waitForRefund(
 }
 
 task("task:deploy_camm", "Deploys the CAMM contracts")
-  .addOptionalParam(
-    "scanner",
-    "Custom price scanner address (defaults to the deployer address)",
-    undefined,
-    types.string,
-  )
   .setAction(async function (_taskArguments: TaskArguments, hre) {
     console.log("Deploying CAMM contracts.");
     const { ethers, deployments, getNamedAccounts, network, run } = hre;
-    const { deploy, get, getOrNull, save, getArtifact, log } = deployments;
+    const { deploy, get, getOrNull, save, getArtifact } = deployments;
     const { deployer } = await getNamedAccounts();
     const deployerSigner = await ethers.getSigner(deployer);
 
-    let scannerAddress: string;
-    if (_taskArguments.scanner) {
-      try {
-        scannerAddress = ethers.getAddress(String(_taskArguments.scanner));
-      } catch {
-        throw new Error(`Invalid --scanner address: ${_taskArguments.scanner}`);
-      }
-    } else {
-      scannerAddress = deployerSigner.address;
-    }
 
     console.log(`Network: ${network.name}`);
     console.log(`Deployer: ${deployer}`);
-    console.log(`Price scanner: ${scannerAddress}`);
-
     // 1) Make sure lib + factory from fixtures are deployed (runs scripts if not yet)
     //    This respects func.dependencies between 'factory' and 'lib'
     await run("deploy", { tags: "factory" });
@@ -235,7 +216,7 @@ task("task:deploy_camm", "Deploys the CAMM contracts")
 
     let pairAddress: string;
     if (existingPair === ethers.ZeroAddress) {
-      const tx = await factory.createPair(token0Address, token1Address, scannerAddress);
+      const tx = await factory.createPair(token0Address, token1Address);
       const rc = await tx.wait();
       if (!rc?.status) throw new Error("createPair failed");
       pairAddress = await factory.getPair(token0Address, token1Address);
@@ -254,7 +235,6 @@ task("task:deploy_camm", "Deploys the CAMM contracts")
       FACTORY_ADDRESS: CAMMFactoryAddress,
       TOKEN0_ADDRESS: token0Address,
       TOKEN1_ADDRESS: token1Address,
-      SCANNER_ADDRESS: scannerAddress,
       LIQ_ADDED: false,
     });
   });

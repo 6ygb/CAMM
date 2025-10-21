@@ -11,13 +11,13 @@ import {CAMMPairLib} from "./CAMMPairLib.sol";
 /**
  * To beat (Dangerously close to size limit): 
 ·------------------------|--------------------------------|--------------------------------·
- |  Solc version: 0.8.27  ·  Optimizer enabled: true       ·  Runs: 50                      │
+ |  Solc version: 0.8.27  ·  Optimizer enabled: true       ·  Runs: 100                     │
  ·························|································|·································
  |  Contract Name         ·  Deployed size (KiB) (change)  ·  Initcode size (KiB) (change)  │
  ·························|································|·································
- |  CAMMFactory           ·                23.699 (0.000)  ·                23.725 (0.000)  │
+ |  CAMMFactory           ·                23.779 (0.000)  ·                23.805 (0.000)  │
  ·························|································|·································
- |  CAMMPair              ·                20.855 (0.000)  ·                22.729 (0.000)  │
+ |  CAMMPair              ·                21.031 (0.000)  ·                22.835 (0.000)  │
  ·························|································|·································
  |  CAMMPairLib           ·                 5.082 (0.000)  ·                 5.113 (0.000)  │
  ·------------------------|--------------------------------|--------------------------------·
@@ -111,7 +111,10 @@ contract CAMMPair is ERC7984, SepoliaConfig {
 
     // Addresses of the factory and associated tokens
     address public factory;
-    address public cammPriceScanner;
+
+    //Cannot delete this useless line, makes the contract too big to be deployed IDK why?
+    address public zeroAddress;
+
     address public token0Address;
     address public token1Address;
     IERC7984 private token0;
@@ -128,9 +131,8 @@ contract CAMMPair is ERC7984, SepoliaConfig {
      * @dev Constructor for the pair contract.
      * Sets the factory address and initializes the token.
      */
-    constructor(address _cammPriceScanner) ERC7984("Liquidity Token", "PAIR", "") {
+    constructor() ERC7984("Liquidity Token", "PAIR", "") {
         factory = msg.sender;
-        cammPriceScanner = _cammPriceScanner;
 
         ZERO = FHE.asEuint64(0);
 
@@ -199,7 +201,7 @@ contract CAMMPair is ERC7984, SepoliaConfig {
 
     /**
      * @dev Recomputes and stores obfuscated reserves using randomized multipliers,
-     *      then updates ACL so this contract and the price scanner can read them.
+     *      then updates ACL so this contract and everyone can read them.
      *      This helps publish reserve-like values without revealing exact reserves.
      *      Computed price from obfuscated reserve is +- 7% close to the real price.
      */

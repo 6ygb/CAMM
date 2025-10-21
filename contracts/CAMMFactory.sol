@@ -43,7 +43,7 @@ contract CAMMFactory {
      * @param tokenB The address of the second token in the pair.
      * @return pair The address of the newly created pair.
      */
-    function createPair(address tokenA, address tokenB, address priceScanner) external returns (address pair) {
+    function createPair(address tokenA, address tokenB) external returns (address pair) {
         // Ensure that the tokens are not the same
         require(tokenA != tokenB);
 
@@ -60,7 +60,7 @@ contract CAMMFactory {
         bytes32 _salt = keccak256(abi.encodePacked(token0, token1));
 
         // Deploy the new CAMMPair contract
-        pair = address(new CAMMPair{salt: _salt}(priceScanner));
+        pair = address(new CAMMPair{salt: _salt}());
 
         // Ensure that the pair was successfully created
         require(pair != address(0));

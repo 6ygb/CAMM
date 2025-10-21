@@ -64,11 +64,7 @@ describe("CAMM Tests", function () {
     const token1 = this.token1;
     const token2 = this.token2;
 
-    const createPairTx = await factory.createPair(
-      await token1.getAddress(),
-      await token2.getAddress(),
-      this.signers[0].address,
-    );
+    const createPairTx = await factory.createPair(await token1.getAddress(), await token2.getAddress());
     const createPairReceipt = await createPairTx.wait();
     expect(createPairReceipt.status).to.equal(1);
 
