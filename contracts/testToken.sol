@@ -11,7 +11,7 @@ contract ConfidentialToken is SepoliaConfig, ERC7984 {
 
     constructor(string memory name_, string memory symbol_) ERC7984(name_, symbol_, "") {
         uint64 scalingFactor = uint64(10) ** decimals();
-        euint64 mintAmount = FHE.asEuint64(100_000 * scalingFactor);
+        euint64 mintAmount = FHE.asEuint64(1_000_000 * scalingFactor);
         airDropAmount = FHE.asEuint64(1000 * scalingFactor);
         FHE.allowThis(airDropAmount);
         _mint(msg.sender, mintAmount);
