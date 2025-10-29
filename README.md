@@ -17,29 +17,29 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
 Front-end POC with test contracts at : https://camm.6ygb.dev <br> <br>
 Deployed on Sepolia :
 
-- Factory (https://sepolia.etherscan.io/address/0x15F98C153493b12D85c0F493e9E7c971203a4809#code) :
+- Factory (https://sepolia.etherscan.io/address/0xEF9B1AE63aB8d6e3D7512154079C4c0fe6EFd132#code) :
   
   ```
-  0x15F98C153493b12D85c0F493e9E7c971203a4809
+  0xEF9B1AE63aB8d6e3D7512154079C4c0fe6EFd132
   ``` 
 
-- Pair (https://sepolia.etherscan.io/address/0x2ab55edf81f6c17fa1A22aF23ed38cE8cF276414#code) :
+- Pair (https://sepolia.etherscan.io/address/0x0BfB47d6BB2a3b4383dAa30E32F92b891dAAEf98#code) :
   ```
-  0x2ab55edf81f6c17fa1A22aF23ed38cE8cF276414
-  ```
-
-- Token 0 - EUR (https://sepolia.etherscan.io/address/0x20E217aD102f18d20faE1B4C7edCD041EF041fE9#code) :
-  ```
-  0x20E217aD102f18d20faE1B4C7edCD041EF041fE9
+  0x0BfB47d6BB2a3b4383dAa30E32F92b891dAAEf98
   ```
 
-- Token 1 - USD (https://sepolia.etherscan.io/address/0xDa5C50A7b88F1D9F59465f21488db38885aF1d7B#code) :
+- Token 0 - USD (https://sepolia.etherscan.io/address/0x066E08fabeaB12965F5aD467bbBf6954B73B9d27#code) :
   ```
-  0xDa5C50A7b88F1D9F59465f21488db38885aF1d7B
+  0x066E08fabeaB12965F5aD467bbBf6954B73B9d27
   ```
-- Pair Library (https://sepolia.etherscan.io/address/0xDE6f4202A2ca25Fd329EcD11f2c62F90248Ad0fd#code) :
+
+- Token 1 - EUR (https://sepolia.etherscan.io/address/0x60B5d3BFca0E45B65D5F0C1Ce15DB06f45c7AD5F#code) :
   ```
-  0xDE6f4202A2ca25Fd329EcD11f2c62F90248Ad0fd
+  0x60B5d3BFca0E45B65D5F0C1Ce15DB06f45c7AD5F
+  ```
+- Pair Library (https://sepolia.etherscan.io/address/0xEd3a54d970196e1665352554c68fd30afEf3b26f#code) :
+  ```
+  0xEd3a54d970196e1665352554c68fd30afEf3b26f
   ```
 
 <br>
