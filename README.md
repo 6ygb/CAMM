@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://github.com/6ygb/CAMM-FRONT/blob/main/public/CammLogo.svg" width="100px" height="100px"/>
+</p>
+
 # CAMM - Confidential Automated Market Maker
 
 **A UniswapV2-style AMM where amounts, balances, and reserves are encrypted end-to-end** using **Zama’s Fully Homomorphic Encryption (FHEVM)**.  
