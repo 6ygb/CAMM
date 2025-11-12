@@ -14,6 +14,8 @@ Liquidity, swaps, and even obfuscated reserves are computed on encrypted ciphert
   Built using Zama's <a href="https://github.com/zama-ai/fhevm">fhEVM</a>, Inspired by <a href="https://github.com/Uniswap/v2-core">UniswapV2</a> 
 </p>
 
+<p align=center>:star2: Winner of Zama's September 2025 builder program :star2:</p>
+
 ## Test it !
 > ⚠️ **Please read the docs first** ⚠️
 
